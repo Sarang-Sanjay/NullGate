@@ -57,6 +57,6 @@ NullGate maintains the following mathematical invariants:
 
 $$\forall \text{ thread } T \text{ in domain } D \ge 1, \quad \text{PKRU}[2 \cdot \text{key}_1 : 2 \cdot \text{key}_1 + 1] = 11_b \quad (\text{Access Denied, Write Disabled})$$
 
-$$\forall \text{ untrusted domain } D \ge 1, \quad \text{PKU\_Key}(D) \in \{2, 3, \dots, 15\} \quad (\text{Key 0 and Key 1 are strictly reserved})$$
+$$\forall \text{ untrusted domain } D \ge 1, \quad \text{PKU-Key}(D) \in \{2, 3, \dots, 15\} \quad (\text{Key 0 and Key 1 are strictly reserved})$$
 
-$$\forall \text{ instruction } I \in \text{Executable\_Segments}(P), \quad I \neq \texttt{0F 01 EF}_{16} \iff I \in \{\text{callgate.S}, \text{signal\_trampoline.S}\}$$
+$$\forall \text{ instruction } I \in \text{Executable-Segments}(P), \quad I \neq \texttt{0F 01 EF}_{16} \iff I \in \{\text{callgate.S}, \text{signal-trampoline.S}\}$$

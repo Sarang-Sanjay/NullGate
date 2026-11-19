@@ -22,12 +22,43 @@ jobs:
             clang-18 \
             llvm-18-dev \
             libclang-18-dev \
-            bpftool \
             libbpf-dev \
             linux-libc-dev \
             cmake \
             libelf-dev \
-            binutils
+            binutils \
+            curl \
+            ca-certificates \
+            git \
+            build-essential
+
+          # Install kernel tools containing bpftool
+          sudo apt-get install -y linux-tools-common linux-tools-generic "linux-tools-$(uname -r)" || true
+
+          # If the system bpftool wrapper works, verify it
+          if ! bpftool version >/dev/null 2>&1; then
+            # Check if any versioned bpftool binary exists and symlink it
+            for bp in /usr/lib/linux-tools/*/bpftool; do
+              if [ -x "$bp" ]; then
+                echo "Linking $bp to /usr/local/bin/bpftool"
+                sudo ln -sf "$bp" /usr/local/bin/bpftool
+                break
+              fi
+            done
+          fi
+
+          # If still not functional, build standalone bpftool from source
+          if ! bpftool version >/dev/null 2>&1; then
+            echo "Compiling standalone bpftool from source..."
+            git clone --depth 1 --recurse-submodules https://github.com/libbpf/bpftool.git /tmp/bpftool
+            make -C /tmp/bpftool/src -j$(nproc)
+            sudo make -C /tmp/bpftool/src install
+            rm -rf /tmp/bpftool
+          fi
+
+          echo "=== bpftool Version & Path ==="
+          which bpftool
+          bpftool version
 
       - name: Pre-Flight Environment Inspection
         run: |

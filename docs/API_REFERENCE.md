@@ -11,7 +11,7 @@ Initializes the NullGate userspace runtime. Detects CPU hardware support (PKU, C
 * **Returns:** `NG_SUCCESS` (0) on success, or negative error code on failure.
 
 ### `int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size);`
-Registers and configures an isolated domain ($1 \le \text{domain\_id} \le 15$). Assigns a dedicated hardware PKU key and tags the provided stack region with `pkey_mprotect()`.
+Registers and configures an isolated domain ($1 \le D \le 15$). Assigns a dedicated hardware PKU key and tags the provided stack region with `pkey_mprotect()`.
 * **Parameters:**
   * `domain_id`: Target domain index (1..15).
   * `stack_base`: Base address of memory allocated for the compartment stack.
@@ -51,7 +51,7 @@ Publishes a message into the channel ring buffer without kernel intervention.
 * **Parameters:**
   * `chan`: Active IPC channel pointer.
   * `data`: Message payload buffer.
-  * `len`: Message length in bytes ($\le \text{NG\_IPC\_MAX\_DATA\_PER\_SLOT}$).
+  * `len`: Message length in bytes ($\le$ `NG_IPC_MAX_DATA_PER_SLOT`, up to 32,744 bytes).
 * **Returns:** `0` on success, or negative error code (`NG_IPC_ERR_FULL`).
 
 ### `int ng_ipc_recv(struct ng_ipc_channel *chan, void *buf, size_t max_len);`

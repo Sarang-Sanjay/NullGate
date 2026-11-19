@@ -62,34 +62,34 @@ NullGate relies on native hardware primitives and Linux LSM hooks:
 The platform operates across four integrated execution planes:
 
 ```mermaid
-graph TD
-    App["Application / Client Process"] -->|Phase 4: Transparent Shim / Direct Call| LibNullGate["libnullgate.so Runtime"]
+flowchart TD
+    App["Application / Client Process"] -->|Transparent Shim or Direct Call| LibNullGate["libnullgate.so Runtime"]
 
-    subgraph "Plane 1: Hardware Memory & Call-Gate Engine (Pillars 1, 4, 5)"
+    subgraph P1 ["Plane 1: Hardware Memory and Call-Gate Engine"]
         LibNullGate -->|callgate.S| Trampoline["Hardware Call-Gate Trampoline (148 cycles)"]
-        Trampoline -->|WRPKRU| PKRU["Hardware PKRU State (Keys 0..15)"]
-        PKRU -->|Key 1 (Supervisor)| StatePage["4KB Quarantined Trusted State (ng_trusted_state)"]
-        PKRU -->|Keys 2..15| Compartments["Untrusted Isolated Compartments"]
+        Trampoline -->|WRPKRU| PKRU["Hardware PKRU State (Keys 0 to 15)"]
+        PKRU -->|Key 1: Supervisor| StatePage["4KB Quarantined Trusted State"]
+        PKRU -->|Keys 2 to 15| Compartments["Untrusted Isolated Compartments"]
         Compartments -->|Guard Pages| StackPool["Hardware-Isolated Stack Pool (PROT_NONE)"]
     end
 
-    subgraph "Plane 2: Hardware Zero-Copy IPC (Pillars 1, 7, 8)"
+    subgraph P2 ["Plane 2: Hardware Zero-Copy IPC"]
         Compartments -->|Lock-Free SPSC| Ring["64-Byte Cacheline SPSC Shared Ring"]
         Ring -->|Shared PKU Key| PeerCompartment["Peer Destination Compartment"]
     end
 
-    subgraph "Plane 3: In-Kernel eBPF LSM Security Boundary (Pillars 2, 3, 6, 7)"
+    subgraph P3 ["Plane 3: In-Kernel eBPF LSM Security Boundary"]
         Compartments -.->|Syscall Interception| LSM["eBPF LSM Hooks (nullgate_lsm.bpf.o)"]
-        LSM -->|bpf_lsm_file_open| BlockProc["Block /proc/$PID/mem & maps"]
-        LSM -->|bpf_lsm_ptrace| BlockPtrace["Deny ptrace attach/traceme"]
-        LSM -->|bpf_lsm_sys_enter| FilterSys["Block bpf, prctl & Deputy usercopy"]
-        LSM -->|bpf_lsm_uring| BlockUring["Deny io_uring setup & commands"]
-        LSM --> RingBuf["eBPF Audit Ring Buffer (BPF_MAP_TYPE_RINGBUF)"]
+        LSM -->|bpf_lsm_file_open| BlockProc["Block /proc/PID/mem and maps"]
+        LSM -->|bpf_lsm_ptrace| BlockPtrace["Deny ptrace attach and traceme"]
+        LSM -->|bpf_lsm_sys_enter| FilterSys["Block bpf, prctl and Deputy Usercopy"]
+        LSM -->|bpf_lsm_uring| BlockUring["Deny io_uring setup and commands"]
+        LSM -->|Ring Buffer Output| RingBuf["eBPF Audit Ring Buffer"]
     end
 
-    subgraph "Plane 4: Dynamic Control Plane & Administration (Pillars 3, 8)"
-        RingBuf --> Daemon["nullgate-daemon (Epoll Unified Event Loop)"]
-        CLI["nullgate-ctl CLI Tool"] -->|Unix Domain Socket /run/nullgate| Daemon
+    subgraph P4 ["Plane 4: Dynamic Control Plane and Administration"]
+        RingBuf --> Daemon["nullgate-daemon (Epoll Event Loop)"]
+        CLI["nullgate-ctl CLI Tool"] -->|Unix Domain Socket| Daemon
         Daemon -->|bpf_map_update_elem| PolicyMap["In-Kernel ng_domain_policy_map"]
     end
 ```
@@ -287,7 +287,7 @@ Nullgate/
 ### 7.1 Formal Mathematical Formulations of Metrics
 
 1. **Call-Gate Transition Overhead Delta ($\Delta_{\text{callgate}}$)**:
-   $$\Delta_{\text{callgate}} = T_{\text{gate}}(\text{ng\_enter}) - T_{\text{direct}}(\text{C Function Call})$$
+   $$\Delta_{\text{callgate}} = T_{\text{gate}}(\text{CallGate}) - T_{\text{direct}}(\text{Native Call})$$
 
 2. **IPC Throughput Capacity ($R_{\text{ipc}}$)**:
    $$R_{\text{ipc}} = \frac{N_{\text{messages}}}{\Delta t_{\text{elapsed}}}$$
