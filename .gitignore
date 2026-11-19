@@ -1,0 +1,61 @@
+# Build directory and CMake artifacts
+build/
+bin/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+Testing/
+
+# Project-specific temporary directory and planning docs
+temp/
+tmp/
+*.tmp
+*implementation_plan*.md
+
+# Object files, libraries, and binaries
+*.o
+*.obj
+*.so
+*.so.*
+*.dylib
+*.a
+*.la
+*.lai
+*.ll
+*.bc
+
+# eBPF compiled artifacts
+*.bpf.o
+*.skel.h
+
+# Debug and memory dumps
+core
+core.*
+*.dSYM/
+*.gdb
+
+# Test outputs and logs
+*.log
+test_bin
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+.cache/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Environment variables & local secrets
+.env
+.env.*
+!.env.example
