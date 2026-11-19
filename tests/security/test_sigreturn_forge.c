@@ -23,7 +23,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
-#include "/usr/include/signal.h"
+#include <signal.h>
 #include <ucontext.h>
 
 #include "nullgate.h"

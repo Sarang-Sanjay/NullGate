@@ -25,16 +25,18 @@ add_compile_options(
     $<$<COMPILE_LANGUAGE:C>:-Werror>
     $<$<COMPILE_LANGUAGE:C>:-fcf-protection=full>
     $<$<COMPILE_LANGUAGE:C>:-mshstk>
+    $<$<COMPILE_LANGUAGE:C>:-fstack-protector-all>
     $<$<COMPILE_LANGUAGE:CXX>:-Wall>
     $<$<COMPILE_LANGUAGE:CXX>:-Wextra>
     $<$<COMPILE_LANGUAGE:CXX>:-Werror>
     $<$<COMPILE_LANGUAGE:CXX>:-fcf-protection=full>
     $<$<COMPILE_LANGUAGE:CXX>:-mshstk>
+    $<$<COMPILE_LANGUAGE:CXX>:-fstack-protector-all>
     $<$<COMPILE_LANGUAGE:ASM>:-fcf-protection=full>
     $<$<COMPILE_LANGUAGE:ASM>:-mshstk>
 )
 
-add_link_options(-fcf-protection=full)
+add_link_options(-fcf-protection=full -Wl,-z,relro,-z,now)
 
 # Global include directories
 include_directories(

@@ -185,7 +185,7 @@ int ng_ipc_recv(struct ng_ipc_channel *chan, void *buf, size_t max_len)
     struct ng_ipc_slot *slot = &ring->slots[idx];
 
     /* Clamp copy_len to both NG_IPC_MAX_DATA_PER_SLOT and caller's max_len */
-    size_t copy_len = slot->len;
+    size_t copy_len = __atomic_load_n(&slot->len, __ATOMIC_ACQUIRE);
     if (copy_len > NG_IPC_MAX_DATA_PER_SLOT) {
         copy_len = NG_IPC_MAX_DATA_PER_SLOT;
     }

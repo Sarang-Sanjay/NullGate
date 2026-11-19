@@ -1,6 +1,6 @@
 CC ?= clang-18
 CFLAGS ?= -Wall -Wextra -Werror -fcf-protection=full -mshstk -I../../include
-LDFLAGS ?= -L../../build/src/libnullgate -lnullgate -pthread -Wl,-rpath,../../build/src/libnullgate
+LDFLAGS ?= -L../../build/src/libnullgate -lnullgate -pthread -Wl,-rpath,'$$ORIGIN/../../build/src/libnullgate' -Wl,-rpath,../../build/src/libnullgate
 
 TARGET = basic_compartment
 

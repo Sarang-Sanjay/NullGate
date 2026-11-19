@@ -165,9 +165,10 @@ int ng_elf_open(struct ng_elf_scanner *scanner, const char *filepath, int flags)
         return NG_SCRUB_ERR_FORMAT;
     }
 
-    /* Program Headers (Fix MED-04: overflow-safe subtraction bounds checks) */
+    /* Program Headers (Fix MED-04: overflow-safe subtraction bounds checks & entsize audit) */
     size_t ph_size = (size_t)scanner->ehdr->e_phnum * sizeof(Elf64_Phdr);
     if (scanner->ehdr->e_phoff == 0 || scanner->ehdr->e_phnum == 0 ||
+        scanner->ehdr->e_phentsize != sizeof(Elf64_Phdr) ||
         scanner->ehdr->e_phoff > scanner->mapped_size ||
         ph_size > scanner->mapped_size - scanner->ehdr->e_phoff) {
         ng_elf_close(scanner);
@@ -177,9 +178,36 @@ int ng_elf_open(struct ng_elf_scanner *scanner, const char *filepath, int flags)
     scanner->phnum = scanner->ehdr->e_phnum;
     scanner->phdrs = (Elf64_Phdr *)((uint8_t *)scanner->mapped_data + scanner->ehdr->e_phoff);
 
+    /* Verify non-overlapping PT_LOAD segments */
+    for (uint16_t i = 0; i < scanner->phnum; i++) {
+        const Elf64_Phdr *phi = &scanner->phdrs[i];
+        if (phi->p_type != PT_LOAD)
+            continue;
+        for (uint16_t j = i + 1; j < scanner->phnum; j++) {
+            const Elf64_Phdr *phj = &scanner->phdrs[j];
+            if (phj->p_type != PT_LOAD)
+                continue;
+            if (phi->p_filesz > 0 && phj->p_filesz > 0) {
+                if (phi->p_offset < phj->p_offset + phj->p_filesz &&
+                    phi->p_offset + phi->p_filesz > phj->p_offset) {
+                    ng_elf_close(scanner);
+                    return NG_SCRUB_ERR_FORMAT;
+                }
+            }
+            if (phi->p_memsz > 0 && phj->p_memsz > 0) {
+                if (phi->p_vaddr < phj->p_vaddr + phj->p_memsz &&
+                    phi->p_vaddr + phi->p_memsz > phj->p_vaddr) {
+                    ng_elf_close(scanner);
+                    return NG_SCRUB_ERR_FORMAT;
+                }
+            }
+        }
+    }
+
     /* Section Headers (optional for stripped binaries) */
     size_t sh_size = (size_t)scanner->ehdr->e_shnum * sizeof(Elf64_Shdr);
     if (scanner->ehdr->e_shoff != 0 && scanner->ehdr->e_shnum != 0 &&
+        scanner->ehdr->e_shentsize == sizeof(Elf64_Shdr) &&
         scanner->ehdr->e_shoff <= scanner->mapped_size &&
         sh_size <= scanner->mapped_size - scanner->ehdr->e_shoff) {
         scanner->shnum = scanner->ehdr->e_shnum;

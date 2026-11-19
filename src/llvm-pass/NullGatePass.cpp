@@ -52,6 +52,8 @@ bool NullGatePass::scanInlineAsm(Instruction *I, InlineAsm *IA)
                           LowerAsm.find(".inst") != std::string::npos ||
                           LowerAsm.find(".value") != std::string::npos ||
                           LowerAsm.find(".short") != std::string::npos ||
+                          LowerAsm.find(".word") != std::string::npos ||
+                          LowerAsm.find(".quad") != std::string::npos ||
                           LowerAsm.find(".long") != std::string::npos ||
                           LowerAsm.find(".int") != std::string::npos ||
                           LowerAsm.find(".ascii") != std::string::npos ||
@@ -119,6 +121,28 @@ bool NullGatePass::scanIntrinsics(Instruction *I, CallInst *CI)
         return true;
     }
 
+    /*
+     * Check 3: Dynamic Symbol Resolution (dlsym) Inspection (SEC-04)
+     * Forbid dynamic symbol lookups of internal privileged symbols or WRPKRU helpers.
+     */
+    if (CalleeName == "dlsym" && CI->arg_size() >= 2) {
+        Value *SymArg = CI->getArgOperand(1)->stripPointerCasts();
+        if (auto *GV = dyn_cast<GlobalVariable>(SymArg)) {
+            if (GV->hasInitializer()) {
+                if (auto *CDA = dyn_cast<ConstantDataArray>(GV->getInitializer())) {
+                    StringRef SymName = CDA->getAsString();
+                    if (SymName.contains("wrpkru") || SymName.contains("__ng_") || SymName.contains("ng_callgate_")) {
+                        emitCompilationError(
+                            I,
+                            "Dynamic resolution via dlsym of sensitive symbol '" + SymName + "' is strictly forbidden."
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
     return false;
 }
 
@@ -164,23 +188,61 @@ bool NullGatePass::verifyDomainAnnotations(Function &F)
 
     if (isDomainFunction) {
         /*
-         * Verify that any direct call to this function originates from trusted dispatchers
-         * or is called via ng_enter() / ng_callgate_invoke().
+         * Verify that any direct call or indirect reference to this function originates from trusted dispatchers
+         * or is passed to ng_enter() / ng_callgate_invoke().
          */
         for (User *U : F.users()) {
-            if (auto *CI = dyn_cast<CallInst>(U)) {
-                Function *Caller = CI->getFunction();
+            if (auto *CB = dyn_cast<CallBase>(U)) {
+                Function *Caller = CB->getFunction();
                 if (Caller && Caller != &F) {
                     StringRef CallerName = Caller->getName();
                     if (!CallerName.starts_with("ng_") && !CallerName.starts_with("__nullgate_")) {
+                        /* Check if F is passed as an authorized argument to a trusted call */
+                        Function *Callee = CB->getCalledFunction();
+                        if (Callee && (Callee->getName().starts_with("ng_") || Callee->getName().starts_with("__nullgate_"))) {
+                            /* Authorized dispatcher argument pass: allowed */
+                            continue;
+                        }
                         /* Direct cross-domain invocation detected without gate */
                         emitCompilationError(
-                            CI,
+                            CB,
                             "Direct call to domain-isolated function '" + F.getName() +
                             "' from untrusted caller '" + CallerName +
                             "' is forbidden. Calls must be routed through ng_enter()."
                         );
                     }
+                }
+            } else if (auto *I = dyn_cast<Instruction>(U)) {
+                Function *Caller = I->getFunction();
+                if (Caller && !Caller->getName().starts_with("ng_") && !Caller->getName().starts_with("__nullgate_")) {
+                    emitCompilationError(
+                        I,
+                        "Indirect function pointer cast or reference to domain-isolated function '" + F.getName() +
+                        "' from untrusted context '" + Caller->getName() +
+                        "' is forbidden. Calls must be routed through ng_enter()."
+                    );
+                }
+            } else if (auto *C = dyn_cast<Constant>(U)) {
+                /* Check if reference is outside llvm.global.annotations (e.g. global table / array) */
+                bool is_annot = false;
+                for (User *CU : C->users()) {
+                    if (CU == GA) {
+                        is_annot = true;
+                        break;
+                    }
+                    for (User *CCU : CU->users()) {
+                        if (CCU == GA) {
+                            is_annot = true;
+                            break;
+                        }
+                    }
+                }
+                if (!is_annot && C != GA) {
+                    emitCompilationError(
+                        nullptr,
+                        "Global table or constant reference to domain-isolated function '" + F.getName() +
+                        "' is forbidden. Domain functions must not be stored in global function tables."
+                    );
                 }
             }
         }

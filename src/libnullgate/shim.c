@@ -75,9 +75,14 @@ void ng_shim_dec_depth(void)
  * ng_shim_reset_depth - Unconditionally reset re-entrancy depth counter.
  * Invoked on call-gate return to prevent desynchronization after longjmp/signals.
  */
+extern void ng_enter_recover_stack_lease(void) __attribute__((weak));
+
 void ng_shim_reset_depth(void)
 {
     t_shim_depth = 0;
+    if (ng_enter_recover_stack_lease) {
+        ng_enter_recover_stack_lease();
+    }
 }
 
 /*
@@ -94,7 +99,7 @@ uint64_t ng_shim_dispatch_func(uint32_t domain_id, ng_compartment_fn adapter, vo
     __asm__ __volatile__("vzeroupper" ::: "memory");
     uint64_t res = ng_enter(domain_id, adapter, pack);
     __asm__ __volatile__("vzeroupper" ::: "memory");
-    t_shim_depth--;
+    ng_shim_dec_depth();
 
     return res;
 }
@@ -112,7 +117,7 @@ void ng_shim_dispatch_void_func(uint32_t domain_id, ng_compartment_fn adapter, v
     __asm__ __volatile__("vzeroupper" ::: "memory");
     (void)ng_enter(domain_id, adapter, pack);
     __asm__ __volatile__("vzeroupper" ::: "memory");
-    t_shim_depth--;
+    ng_shim_dec_depth();
 }
 
 /*

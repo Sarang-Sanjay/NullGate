@@ -42,6 +42,10 @@ struct json_scanner {
     int err;
 };
 
+#ifndef NG_JSON_MAX_DEPTH
+#define NG_JSON_MAX_DEPTH 32
+#endif
+
 /* Forward declarations */
 static void scan_skip_whitespace_and_comments(struct json_scanner *s);
 static struct json_token scan_next_token(struct json_scanner *s);
@@ -322,16 +326,21 @@ static int parse_domain_object(struct json_scanner *s, struct ng_domain_policy *
                 }
             }
         } else {
-            /* Skip unknown scalar or nested value */
+            /* Skip unknown scalar or nested value with depth limit */
             tok = scan_next_token(s);
             if (tok.type == TOK_LBRACKET || tok.type == TOK_LBRACE) {
                 int depth = 1;
                 while (s->cursor < s->len && depth > 0) {
                     tok = scan_next_token(s);
-                    if (tok.type == TOK_LBRACKET || tok.type == TOK_LBRACE)
+                    if (tok.type == TOK_EOF || tok.type == TOK_ERROR)
+                        return NG_POLICY_ERR_SYNTAX;
+                    if (tok.type == TOK_LBRACKET || tok.type == TOK_LBRACE) {
                         depth++;
-                    else if (tok.type == TOK_RBRACKET || tok.type == TOK_RBRACE)
+                        if (depth > NG_JSON_MAX_DEPTH)
+                            return NG_POLICY_ERR_OVERFLOW;
+                    } else if (tok.type == TOK_RBRACKET || tok.type == TOK_RBRACE) {
                         depth--;
+                    }
                 }
             }
         }
@@ -423,8 +432,23 @@ int ng_policy_parse_json(const char *json_str, size_t json_len, struct ng_policy
                 }
             }
         } else {
-            /* Skip unknown token */
+            /* Skip unknown scalar or complex value with depth limit */
             tok = scan_next_token(&s);
+            if (tok.type == TOK_LBRACKET || tok.type == TOK_LBRACE) {
+                int depth = 1;
+                while (s.cursor < s.len && depth > 0) {
+                    tok = scan_next_token(&s);
+                    if (tok.type == TOK_EOF || tok.type == TOK_ERROR)
+                        return NG_POLICY_ERR_SYNTAX;
+                    if (tok.type == TOK_LBRACKET || tok.type == TOK_LBRACE) {
+                        depth++;
+                        if (depth > NG_JSON_MAX_DEPTH)
+                            return NG_POLICY_ERR_OVERFLOW;
+                    } else if (tok.type == TOK_RBRACKET || tok.type == TOK_RBRACE) {
+                        depth--;
+                    }
+                }
+            }
         }
     }
 

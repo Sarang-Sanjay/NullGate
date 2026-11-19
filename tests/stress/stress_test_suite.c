@@ -154,23 +154,21 @@ static void test_boundary_and_exhaustion(void)
 /* ========================================================================= */
 /* TEST 2: Intel CET User Shadow Stack (SHSTK) ROP Attack Trapping          */
 /* ========================================================================= */
+__attribute__((no_stack_protector))
 static uint64_t rop_attacker_compartment(void *arg)
 {
     (void)arg;
     /*
      * The compartment tries to tamper with the return address on the data stack.
-     * In an AMD64 leaf/non-leaf function, the return address is on the stack.
+     * In an AMD64 System V function, the return address is at 8(%rbp).
      * Under Intel CET User Shadow Stack, tampering with this return address
      * MUST trigger a Control Protection Fault (#CP) upon `ret`!
      */
-    void **stack_slot;
     __asm__ volatile (
-        "movq %%rsp, %0" : "=r" (stack_slot)
+        "movabsq $0x4141414141414141, %%rax\n\t"
+        "movq %%rax, 8(%%rbp)\n\t"
+        ::: "rax", "memory"
     );
-
-    /* Overwrite caller return address with a dummy address (ROP payload) */
-    /* Find return address: if %rsp is 16n + 8, *stack_slot is the return address */
-    stack_slot[0] = (void *)0x4141414141414141ULL;
 
     /* Now return. The hardware SHSTK should compare 0x4141414141414141 against
      * the shadow stack entry, detect a mismatch, and trigger #CP (SIGSEGV / SEGV_CPERR)! */

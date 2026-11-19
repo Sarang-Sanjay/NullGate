@@ -18,6 +18,9 @@ NG_EMIT_GNU_PROPERTY_NOTE
 
 .section .text.nullgate_callgate, "ax", @progbits
 .p2align 4, 0x90
+.globl __ng_callgate_enter_start
+.hidden __ng_callgate_enter_start
+__ng_callgate_enter_start:
 .globl ng_callgate_invoke
 .type ng_callgate_invoke, @function
 
@@ -98,6 +101,7 @@ ng_callgate_invoke:
      * Followed immediately by LFENCE to halt speculative execution.
      */
 .globl __ng_callgate_drop_privs
+.hidden __ng_callgate_drop_privs
 __ng_callgate_drop_privs:
     movl    %r8d, %eax
     xorl    %ecx, %ecx
@@ -105,6 +109,7 @@ __ng_callgate_drop_privs:
     wrpkru
     lfence
 .globl __ng_callgate_drop_privs_end
+.hidden __ng_callgate_drop_privs_end
 __ng_callgate_drop_privs_end:
 
     /*
@@ -152,6 +157,7 @@ __ng_callgate_drop_privs_end:
      * in the untrusted compartment domain.
      */
 .globl __ng_callgate_restore_privs
+.hidden __ng_callgate_restore_privs
 __ng_callgate_restore_privs:
     xorl    %eax, %eax
     xorl    %ecx, %ecx
@@ -170,6 +176,7 @@ __ng_callgate_restore_privs:
     movl    $0, 8(%r12)
     movq    0(%r12), %rsp
 .globl __ng_callgate_restore_privs_end
+.hidden __ng_callgate_restore_privs_end
 __ng_callgate_restore_privs_end:
 
     /*
@@ -217,5 +224,9 @@ __ng_callgate_restore_privs_end:
      */
     ret
     .cfi_endproc
+
+.globl __ng_callgate_enter_end
+.hidden __ng_callgate_enter_end
+__ng_callgate_enter_end:
 
 .size ng_callgate_invoke, . - ng_callgate_invoke

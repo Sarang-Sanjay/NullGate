@@ -18,7 +18,13 @@ Registers and configures an isolated domain ($1 \le D \le 15$). Assigns a dedica
   * `stack_size`: Size of the stack buffer in bytes (must be page-aligned).
 * **Returns:** `NG_SUCCESS` (0) on success, or negative error code.
 
-### `uint64_t ng_enter(uint32_t domain_id, ng_compartment_func_t fn, void *arg);`
+### `int ng_domain_destroy(uint32_t domain_id);`
+Safely tears down an allocated domain, resets stack memory protection to Key 0, recycles hardware PKU keys, and clears domain descriptor.
+* **Parameters:**
+  * `domain_id`: Target domain index to destroy (1..15).
+* **Returns:** `NG_SUCCESS` (0) on success, `NG_ERR_LOCKED` if actively leased, or `NG_ERR_INVALID`.
+
+### `uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg);`
 Executes an untrusted function inside the designated compartment via the hardware call-gate. Switches the active stack, revokes Key 0 and Key 1 privileges via `WRPKRU`, executes `fn(arg)`, restores supervisor privileges, and returns the result.
 * **Parameters:**
   * `domain_id`: Target compartment index.

@@ -95,13 +95,22 @@ int BPF_PROG(ng_task_alloc, struct task_struct *task, u64 clone_flags)
      *   Mark child_ctx->is_thread_clone = 1 and clear trusted_state_addr = 0.
      *   The thread will register its state page via NG_PRCTL_MAGIC_REGISTER.
      */
-    if (clone_flags & CLONE_VM) {
-        __u32 live_dom = ng_get_live_domain(parent_ctx);
-        if (live_dom != NG_DOMAIN_TRUSTED) {
-            /* Fix HIGH-04: Untrusted compartments cannot spawn unmanaged threads */
+    __u32 live_dom = ng_get_live_domain(parent_ctx);
+    if (live_dom != NG_DOMAIN_TRUSTED) {
+        if (clone_flags & CLONE_VM) {
+            /* Untrusted compartments cannot spawn unmanaged threads */
             ng_emit_audit_event(parent_ctx, live_dom, NG_EVENT_VIOLATION, -EPERM);
             return -EPERM;
         }
+        /* Verify domain policy permits fork() / process spawning */
+        struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
+        if (!pol || !(pol->policy_flags & NG_POLICY_INHERIT_FORK)) {
+            ng_emit_audit_event(parent_ctx, live_dom, NG_EVENT_VIOLATION, -EPERM);
+            return -EPERM;
+        }
+    }
+
+    if (clone_flags & CLONE_VM) {
         child_ctx->is_thread_clone = 1;
         child_ctx->trusted_state_addr = 0;
     } else {
@@ -145,6 +154,37 @@ void BPF_PROG(ng_task_free, struct task_struct *task)
      * when the task_struct is released.
      */
     ng_emit_audit_event(task_ctx, task_ctx->active_domain, NG_EVENT_DOMAIN_EXIT, 0);
+}
+
+/*
+ * SEC("lsm/bprm_check_security"):
+ * Hook called by Linux security_bprm_check_security() before loading a binary image.
+ * Guarantees untrusted compartments cannot break out of intra-process isolation via execve.
+ *
+ * Prototype in Linux 6.8+ BTF:
+ *     int (*bprm_check_security)(struct linux_binprm *bprm);
+ */
+SEC("lsm/bprm_check_security")
+int BPF_PROG(ng_bprm_check_security, struct linux_binprm *bprm)
+{
+    (void)bprm;
+
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
+    if (!task)
+        return 0;
+
+    struct ng_task_ctx *tctx = ng_get_task_ctx_ro(task);
+    if (!tctx || !(tctx->flags & NG_TASK_LOCKED))
+        return 0;
+
+    __u32 live_dom = ng_get_live_domain(tctx);
+    if (live_dom != NG_DOMAIN_TRUSTED) {
+        /* Untrusted compartments are strictly forbidden from execve breakout */
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+
+    return 0;
 }
 
 #pragma clang diagnostic pop

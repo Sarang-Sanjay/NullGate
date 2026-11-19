@@ -77,6 +77,8 @@ static struct thread_stack_pool *get_or_create_thread_pool(void)
     return t_pool;
 }
 
+#define NG_STACK_MAX_SIZE       (64 * 1024 * 1024) /* 64MB maximum stack */
+
 struct ng_stack_slot *ng_stack_pool_acquire(uint32_t domain_id, int pkey, size_t desired_size)
 {
     struct thread_stack_pool *pool = get_or_create_thread_pool();
@@ -86,8 +88,14 @@ struct ng_stack_slot *ng_stack_pool_acquire(uint32_t domain_id, int pkey, size_t
     if (desired_size == 0)
         desired_size = NG_STACK_DEFAULT_SIZE;
 
+    /* Prevent integer overflows and enforce upper stack boundary */
+    if (desired_size > NG_STACK_MAX_SIZE || desired_size > (SIZE_MAX - 0xFFFULL - NG_STACK_GUARD_SIZE))
+        return NULL;
+
     /* Align desired usable stack size up to 4096-byte page boundary */
     desired_size = (desired_size + 0xFFFULL) & ~0xFFFULL;
+    if (desired_size > NG_STACK_MAX_SIZE)
+        return NULL;
 
     /* Check thread-local cache for available matching stack (O(1)) */
     for (size_t i = 0; i < pool->count; i++) {

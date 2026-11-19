@@ -102,14 +102,21 @@ int pku_alloc_domain_key(uint32_t domain_id)
     if (domain_id >= NG_MAX_DOMAINS)
         return NG_ERR_INVALID;
 
-    if (g_domain_keys[domain_id] >= 0)
-        return g_domain_keys[domain_id];
+    pthread_mutex_lock(&g_pku_key_mutex);
+    if (g_domain_keys[domain_id] >= 0) {
+        int existing = g_domain_keys[domain_id];
+        pthread_mutex_unlock(&g_pku_key_mutex);
+        return existing;
+    }
 
     int key = pkey_alloc(0, 0);
-    if (key < 0)
+    if (key < 0) {
+        pthread_mutex_unlock(&g_pku_key_mutex);
         return NG_ERR_PKU;
+    }
 
     g_domain_keys[domain_id] = key;
+    pthread_mutex_unlock(&g_pku_key_mutex);
     return key;
 }
 
@@ -218,6 +225,33 @@ int pku_revoke_shared_key(uint32_t domain_id, int shared_pkey)
 
     pthread_mutex_lock(&g_pku_key_mutex);
     g_shared_key_masks[domain_id] &= (uint16_t)~(1U << shared_pkey);
+    pthread_mutex_unlock(&g_pku_key_mutex);
+
+    ng_domain_refresh_pkru(domain_id);
+    return 0;
+}
+
+int pku_free_domain_key(uint32_t domain_id)
+{
+    if (domain_id == NG_DOMAIN_TRUSTED || domain_id >= NG_MAX_DOMAINS)
+        return -EINVAL;
+
+    pthread_mutex_lock(&g_pku_key_mutex);
+    int key = g_domain_keys[domain_id];
+    if (key > 1 && key < 16) {
+        bool in_use = false;
+        for (uint32_t d = 1; d < NG_MAX_DOMAINS; d++) {
+            if (d != domain_id && g_domain_keys[d] == key) {
+                in_use = true;
+                break;
+            }
+        }
+        if (!in_use) {
+            pkey_free(key);
+        }
+        g_domain_keys[domain_id] = -1;
+    }
+    g_shared_key_masks[domain_id] = 0;
     pthread_mutex_unlock(&g_pku_key_mutex);
 
     ng_domain_refresh_pkru(domain_id);

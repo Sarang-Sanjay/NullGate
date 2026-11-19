@@ -56,6 +56,17 @@ int ng_init(void);
 int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size);
 
 /**
+ * ng_domain_destroy - Safely tear down an isolated domain and recycle its resources.
+ * @domain_id: Target domain identifier (1 .. NG_MAX_DOMAINS - 1)
+ *
+ * Resets stack protection to default Key 0, recycles hardware PKU keys,
+ * and clears the domain descriptor. Fails with NG_ERR_LOCKED if domain is active.
+ *
+ * Returns NG_SUCCESS (0) on success, or a negative NG_ERR_* code on failure.
+ */
+int ng_domain_destroy(uint32_t domain_id);
+
+/**
  * ng_domain_protect - Tag a memory range with a domain's PKU key.
  * @domain_id: Target domain ID (0 .. NG_MAX_DOMAINS - 1)
  * @addr: Page-aligned memory address

@@ -89,6 +89,42 @@ static int connect_daemon(void)
     return -1;
 }
 
+static int send_all(int fd, const void *buf, size_t len)
+{
+    const uint8_t *p = (const uint8_t *)buf;
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = send(fd, p + total, len - total, MSG_NOSIGNAL);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -errno;
+        }
+        if (n == 0)
+            return -EPIPE;
+        total += (size_t)n;
+    }
+    return 0;
+}
+
+static int recv_all(int fd, void *buf, size_t len)
+{
+    uint8_t *p = (uint8_t *)buf;
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = recv(fd, p + total, len - total, 0);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -errno;
+        }
+        if (n == 0)
+            return -ECONNRESET;
+        total += (size_t)n;
+    }
+    return 0;
+}
+
 static int send_cmd(int fd, uint16_t cmd, const void *payload, uint32_t payload_len,
                     struct ng_control_hdr *resp_hdr, void *resp_buf, uint32_t max_resp)
 {
@@ -101,19 +137,21 @@ static int send_cmd(int fd, uint16_t cmd, const void *payload, uint32_t payload_
     req.data_len = payload_len;
     req.seq = 1;
 
-    if (send(fd, &req, sizeof(req), MSG_NOSIGNAL) != (ssize_t)sizeof(req)) {
-        return -errno;
+    int err = send_all(fd, &req, sizeof(req));
+    if (err < 0) {
+        return err;
     }
 
     if (payload && payload_len > 0) {
-        if (send(fd, payload, payload_len, MSG_NOSIGNAL) != (ssize_t)payload_len) {
-            return -errno;
+        err = send_all(fd, payload, payload_len);
+        if (err < 0) {
+            return err;
         }
     }
 
-    ssize_t n = recv(fd, resp_hdr, sizeof(*resp_hdr), MSG_WAITALL);
-    if (n != (ssize_t)sizeof(*resp_hdr)) {
-        return -errno;
+    err = recv_all(fd, resp_hdr, sizeof(*resp_hdr));
+    if (err < 0) {
+        return err;
     }
 
     if (resp_hdr->magic != NG_CONTROL_MAGIC) {
@@ -122,9 +160,9 @@ static int send_cmd(int fd, uint16_t cmd, const void *payload, uint32_t payload_
 
     if (resp_hdr->data_len > 0 && resp_buf && max_resp > 0) {
         uint32_t to_read = (resp_hdr->data_len < max_resp) ? resp_hdr->data_len : max_resp;
-        ssize_t p_bytes = recv(fd, resp_buf, to_read, MSG_WAITALL);
-        if (p_bytes != (ssize_t)to_read) {
-            return -errno;
+        err = recv_all(fd, resp_buf, to_read);
+        if (err < 0) {
+            return err;
         }
     }
 

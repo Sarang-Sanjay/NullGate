@@ -13,9 +13,11 @@
 #include <unistd.h>
 
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "nullgate.h"
 #include "nullgate_abi.h"
+#include "nullgate_stack_pool.h"
 #include "pku.h"
 #include "callgate.h"
 #include "signal.h"
@@ -29,6 +31,7 @@ struct ng_domain_desc {
     int pkey;
     uint32_t target_pkru;
     bool allocated;
+    atomic_bool stack_in_use;
 };
 
 static struct ng_domain_desc g_domains[NG_MAX_DOMAINS];
@@ -36,8 +39,14 @@ __attribute__((visibility("hidden")))
 struct ng_trusted_state *g_trusted_state = NULL;
 
 /* Per-Thread Trusted State & Altstack (Fix HIGH-01, HIGH-03) */
+__attribute__((visibility("hidden")))
 __thread struct ng_trusted_state *t_trusted_state __attribute__((tls_model("initial-exec"))) = NULL;
 static __thread void *t_altstack_buf = NULL;
+
+/* Per-thread active stack lease tracking for crash / unwind recovery (SEC-02) */
+static __thread struct ng_stack_slot *t_active_pooled_slot = NULL;
+static __thread int32_t t_active_leased_domain = -1;
+__attribute__((visibility("hidden"))) void ng_enter_recover_stack_lease(void);
 
 static bool g_rt_initialized = false;
 static bool g_bpf_registered = false;
@@ -124,6 +133,10 @@ static void ng_atfork_child(void)
     if (g_trusted_state) {
         (void)mlock(g_trusted_state, 4096);
     }
+
+    for (uint32_t d = 0; d < NG_MAX_DOMAINS; d++) {
+        atomic_store(&g_domains[d].stack_in_use, false);
+    }
 }
 
 int ng_init(void)
@@ -178,6 +191,7 @@ static void ng_rt_init(void)
 __attribute__((destructor))
 static void ng_rt_fini(void)
 {
+    ng_enter_recover_stack_lease();
     ng_signal_subsystem_cleanup();
 }
 
@@ -281,6 +295,42 @@ int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size)
     return NG_SUCCESS;
 }
 
+int ng_domain_destroy(uint32_t domain_id)
+{
+    if (!g_rt_initialized)
+        return NG_ERR_INVALID;
+
+    if (domain_id == NG_DOMAIN_TRUSTED || domain_id >= NG_MAX_DOMAINS)
+        return NG_ERR_INVALID;
+
+    pthread_mutex_lock(&g_domain_mutex);
+    if (!g_domains[domain_id].allocated) {
+        pthread_mutex_unlock(&g_domain_mutex);
+        return NG_ERR_INVALID;
+    }
+
+    if (atomic_load(&g_domains[domain_id].stack_in_use)) {
+        pthread_mutex_unlock(&g_domain_mutex);
+        return NG_ERR_LOCKED;
+    }
+
+    /* Reset stack memory mapping back to default Key 0 */
+    if (g_domains[domain_id].stack_base && g_domains[domain_id].stack_size) {
+        (void)pkey_mprotect(g_domains[domain_id].stack_base, g_domains[domain_id].stack_size,
+                            PROT_READ | PROT_WRITE, 0);
+    }
+
+    /* Free hardware pkey if allocated */
+    int pkey = g_domains[domain_id].pkey;
+    if (pkey > 1 && pkey < 16) {
+        pku_free_domain_key(domain_id);
+    }
+
+    memset(&g_domains[domain_id], 0, sizeof(g_domains[domain_id]));
+    pthread_mutex_unlock(&g_domain_mutex);
+    return NG_SUCCESS;
+}
+
 void ng_domain_refresh_pkru(uint32_t domain_id)
 {
     if (domain_id < NG_MAX_DOMAINS) {
@@ -365,6 +415,18 @@ int ng_domain_protect(uint32_t domain_id, void *addr, size_t len, int prot)
     return NG_SUCCESS;
 }
 
+__attribute__((visibility("hidden")))
+void ng_enter_recover_stack_lease(void)
+{
+    if (t_active_pooled_slot != NULL) {
+        ng_stack_pool_release(t_active_pooled_slot);
+        t_active_pooled_slot = NULL;
+    } else if (t_active_leased_domain >= 0 && (uint32_t)t_active_leased_domain < NG_MAX_DOMAINS) {
+        atomic_store(&g_domains[t_active_leased_domain].stack_in_use, false);
+    }
+    t_active_leased_domain = -1;
+}
+
 extern void ng_shim_reset_depth(void) __attribute__((weak));
 
 uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
@@ -384,7 +446,25 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
     if (!g_domains[domain_id].allocated || !fn)
         return (uint64_t)-1;
 
-    void *stack_top = g_domains[domain_id].stack_top;
+    void *stack_top = NULL;
+    struct ng_stack_slot *pooled_slot = NULL;
+
+    bool expected_unused = false;
+    if (atomic_compare_exchange_strong(&g_domains[domain_id].stack_in_use, &expected_unused, true)) {
+        stack_top = g_domains[domain_id].stack_top;
+    } else {
+        /* Concurrent execution on the same domain: checkout a dedicated pooled stack */
+        pooled_slot = ng_stack_pool_acquire(domain_id, g_domains[domain_id].pkey, g_domains[domain_id].stack_size);
+        if (!pooled_slot) {
+            return (uint64_t)-1;
+        }
+        stack_top = pooled_slot->stack_top;
+    }
+
+    /* Record thread-local stack lease for unwinding and crash resilience */
+    t_active_pooled_slot = pooled_slot;
+    t_active_leased_domain = (int32_t)domain_id;
+
     uint32_t target_pkru = g_domains[domain_id].target_pkru;
 
     /*
@@ -394,6 +474,15 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
      * Concurrency is fully parallel per thread without global mutex serialization!
      */
     uint64_t res = ng_callgate_invoke(domain_id, fn, arg, stack_top, target_pkru, tstate);
+
+    if (pooled_slot) {
+        ng_stack_pool_release(pooled_slot);
+    } else {
+        atomic_store(&g_domains[domain_id].stack_in_use, false);
+    }
+    t_active_pooled_slot = NULL;
+    t_active_leased_domain = -1;
+
     if (ng_shim_reset_depth) {
         ng_shim_reset_depth();
     }

@@ -529,8 +529,7 @@ static void test_stage8_policy_engine(void)
     const char *paths[] = {
         "benchmarks/sqlite/sqlite_policy.json",
         "../benchmarks/sqlite/sqlite_policy.json",
-        "../../benchmarks/sqlite/sqlite_policy.json",
-        "/home/sarang/Nullgate/benchmarks/sqlite/sqlite_policy.json"
+        "../../benchmarks/sqlite/sqlite_policy.json"
     };
     const char *chosen = NULL;
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {

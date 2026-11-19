@@ -1,8 +1,8 @@
 CC ?= clang-18
 CFLAGS ?= -Wall -Wextra -Werror -fcf-protection=full -mshstk -I../../include
-SHIM_LDFLAGS ?= -shared -fPIC -L../../build/src/libnullgate -Wl,--no-as-needed -lnullgate -lnullgate_shim -ldl -pthread -Wl,--as-needed -Wl,-rpath,../../build/src/libnullgate
+SHIM_LDFLAGS ?= -shared -fPIC -L../../build/src/libnullgate -Wl,--no-as-needed -lnullgate -lnullgate_shim -ldl -pthread -Wl,--as-needed -Wl,-rpath,'$$ORIGIN/../../build/src/libnullgate' -Wl,-rpath,../../build/src/libnullgate
 LIB_LDFLAGS ?= -shared -fPIC
-APP_LDFLAGS ?= -L. -lparser -Wl,-rpath,.
+APP_LDFLAGS ?= -L. -lparser -Wl,-rpath,'$$ORIGIN' -Wl,-rpath,.
 
 all: libparser.so libparser_shim.so app
 

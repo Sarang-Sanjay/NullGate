@@ -172,11 +172,46 @@ struct ng_control_server *ng_control_server_create(const char *override_path)
     return srv;
 }
 
+static int server_send_all(int fd, const void *buf, size_t len)
+{
+    const uint8_t *p = (const uint8_t *)buf;
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = send(fd, p + total, len - total, MSG_NOSIGNAL);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -errno;
+        }
+        if (n == 0)
+            return -EPIPE;
+        total += (size_t)n;
+    }
+    return 0;
+}
+
+static int server_recv_all(int fd, void *buf, size_t len)
+{
+    uint8_t *p = (uint8_t *)buf;
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = recv(fd, p + total, len - total, 0);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -errno;
+        }
+        if (n == 0)
+            return -ECONNRESET;
+        total += (size_t)n;
+    }
+    return 0;
+}
+
 static void handle_client_request(int client_fd, struct ng_control_server *srv)
 {
     struct ng_control_hdr req_hdr;
-    ssize_t n = recv(client_fd, &req_hdr, sizeof(req_hdr), MSG_WAITALL);
-    if (n != (ssize_t)sizeof(req_hdr)) {
+    if (server_recv_all(client_fd, &req_hdr, sizeof(req_hdr)) < 0) {
         return;
     }
 
@@ -184,7 +219,7 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
         struct ng_control_hdr err_resp = req_hdr;
         err_resp.status = -EPROTO;
         err_resp.data_len = 0;
-        (void)send(client_fd, &err_resp, sizeof(err_resp), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &err_resp, sizeof(err_resp));
         return;
     }
 
@@ -192,7 +227,7 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
         struct ng_control_hdr err_resp = req_hdr;
         err_resp.status = -EMSGSIZE;
         err_resp.data_len = 0;
-        (void)send(client_fd, &err_resp, sizeof(err_resp), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &err_resp, sizeof(err_resp));
         return;
     }
 
@@ -203,11 +238,10 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
             struct ng_control_hdr err_resp = req_hdr;
             err_resp.status = -ENOMEM;
             err_resp.data_len = 0;
-            (void)send(client_fd, &err_resp, sizeof(err_resp), MSG_NOSIGNAL);
+            (void)server_send_all(client_fd, &err_resp, sizeof(err_resp));
             return;
         }
-        ssize_t p_bytes = recv(client_fd, payload, req_hdr.data_len, MSG_WAITALL);
-        if (p_bytes != (ssize_t)req_hdr.data_len) {
+        if (server_recv_all(client_fd, payload, req_hdr.data_len) < 0) {
             free(payload);
             return;
         }
@@ -223,8 +257,8 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
         const char *pong = "PONG";
         resp_hdr.status = 0;
         resp_hdr.data_len = 4;
-        (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
-        (void)send(client_fd, pong, 4, MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
+        (void)server_send_all(client_fd, pong, 4);
         break;
     }
     case NG_CMD_STATUS: {
@@ -238,8 +272,8 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
 
         resp_hdr.status = 0;
         resp_hdr.data_len = sizeof(stat);
-        (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
-        (void)send(client_fd, &stat, sizeof(stat), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
+        (void)server_send_all(client_fd, &stat, sizeof(stat));
         break;
     }
     case NG_CMD_POLICY_RELOAD: {
@@ -255,14 +289,14 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
             }
         }
         resp_hdr.data_len = 0;
-        (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
         break;
     }
     case NG_CMD_QUERY_DOMAIN: {
         if (!payload || req_hdr.data_len < sizeof(struct ng_control_domain_query)) {
             resp_hdr.status = -EINVAL;
             resp_hdr.data_len = 0;
-            (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
+            (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
         } else {
             const struct ng_control_domain_query *q = (const struct ng_control_domain_query *)payload;
             struct ng_domain_policy pol;
@@ -271,12 +305,12 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
             if (ret < 0) {
                 resp_hdr.status = ret;
                 resp_hdr.data_len = 0;
-                (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
+                (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
             } else {
                 resp_hdr.status = 0;
                 resp_hdr.data_len = sizeof(pol);
-                (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
-                (void)send(client_fd, &pol, sizeof(pol), MSG_NOSIGNAL);
+                (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
+                (void)server_send_all(client_fd, &pol, sizeof(pol));
             }
         }
         break;
@@ -289,14 +323,14 @@ static void handle_client_request(int client_fd, struct ng_control_server *srv)
         }
         resp_hdr.status = 0;
         resp_hdr.data_len = sizeof(pols);
-        (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
-        (void)send(client_fd, pols, sizeof(pols), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
+        (void)server_send_all(client_fd, pols, sizeof(pols));
         break;
     }
     default:
         resp_hdr.status = -ENOSYS;
         resp_hdr.data_len = 0;
-        (void)send(client_fd, &resp_hdr, sizeof(resp_hdr), MSG_NOSIGNAL);
+        (void)server_send_all(client_fd, &resp_hdr, sizeof(resp_hdr));
         break;
     }
 
@@ -314,10 +348,10 @@ static void accept_client_connection(struct ng_control_server *srv)
     if (client_fd < 0)
         return;
 
-    /* Configure 500ms receive and send timeouts to prevent Slowloris DoS */
+    /* Configure 100ms receive and send timeouts to prevent Slowloris DoS stalls on epoll loop */
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 500000; /* 500ms */
+    tv.tv_usec = 100000; /* 100ms */
     (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     (void)setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 

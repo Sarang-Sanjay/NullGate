@@ -60,13 +60,13 @@ echo -e "${BLUE}[CHECK 4]${NC} Production Directories & Permissions..."
 if [ "$(id -u)" -eq 0 ]; then
     mkdir -p /etc/nullgate
     mkdir -p /run/nullgate
-    chmod 0755 /etc/nullgate
-    chmod 0755 /run/nullgate
+    chmod 0700 /etc/nullgate
+    chmod 0700 /run/nullgate
     echo -e "         ${GREEN}[PASS]${NC} Configured /etc/nullgate and /run/nullgate"
 
     if [ -f "${ROOT_DIR}/benchmarks/sqlite/sqlite_policy.json" ] && [ ! -f /etc/nullgate/policy.json ]; then
         cp "${ROOT_DIR}/benchmarks/sqlite/sqlite_policy.json" /etc/nullgate/policy.json
-        chmod 0644 /etc/nullgate/policy.json
+        chmod 0600 /etc/nullgate/policy.json
         echo -e "         ${GREEN}[PASS]${NC} Installed default policy to /etc/nullgate/policy.json"
     fi
 

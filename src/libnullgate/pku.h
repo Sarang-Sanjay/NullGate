@@ -112,6 +112,14 @@ int pku_grant_shared_key(uint32_t domain_id, int shared_pkey);
 int pku_revoke_shared_key(uint32_t domain_id, int shared_pkey);
 
 /**
+ * pku_free_domain_key - Safely recycle a domain's hardware protection key.
+ * @domain_id: Domain ID whose key is being released
+ *
+ * Returns 0 on success, or -EINVAL on invalid domain.
+ */
+int pku_free_domain_key(uint32_t domain_id);
+
+/**
  * ng_domain_refresh_pkru - Refresh a domain's target PKRU mask from current key mappings.
  * @domain_id: Target domain ID (0..15)
  */

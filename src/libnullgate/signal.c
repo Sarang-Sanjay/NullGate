@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include "/usr/include/signal.h"
+#include <signal.h>
 #include <ucontext.h>
 #include <sys/mman.h>
 #include <cpuid.h>
@@ -53,8 +53,9 @@ static uint32_t g_pkru_xstate_offset = 0;
 static bool g_sig_subsystem_initialized = false;
 
 /* Reference to global trusted runtime state and per-thread TLS state defined in init.c */
-extern struct ng_trusted_state *g_trusted_state;
-extern __thread struct ng_trusted_state *t_trusted_state __attribute__((tls_model("initial-exec")));
+extern struct ng_trusted_state *g_trusted_state __attribute__((visibility("hidden")));
+extern __thread struct ng_trusted_state *t_trusted_state __attribute__((tls_model("initial-exec"), visibility("hidden")));
+extern void ng_enter_recover_stack_lease(void) __attribute__((visibility("hidden")));
 
 static inline struct ng_trusted_state *get_active_trusted_state(void)
 {
@@ -187,9 +188,12 @@ uint64_t ng_signal_get_violation_count(void)
  * permissive PKRU values on stack (SROP attack) to regain access to Key 1 (trusted state)
  * or other compartments upon return.
  */
-/* Callgate trampoline exit boundary symbols defined in callgate.S */
-extern char __ng_callgate_restore_privs[];
-extern char __ng_callgate_restore_privs_end[];
+/* Callgate trampoline entry/exit boundary symbols defined in callgate.S */
+extern char __ng_callgate_enter_start[] __attribute__((visibility("hidden")));
+extern char __ng_callgate_drop_privs_end[] __attribute__((visibility("hidden")));
+extern char __ng_callgate_restore_privs[] __attribute__((visibility("hidden")));
+extern char __ng_callgate_restore_privs_end[] __attribute__((visibility("hidden")));
+extern char __ng_callgate_enter_end[] __attribute__((visibility("hidden")));
 
 static void sanitize_ucontext_pkru(void *ucontext)
 {
@@ -200,9 +204,11 @@ static void sanitize_ucontext_pkru(void *ucontext)
     if (ucontext != NULL) {
         ucontext_t *uc = (ucontext_t *)ucontext;
         uintptr_t rip = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
-        if (rip >= (uintptr_t)__ng_callgate_restore_privs &&
-            rip < (uintptr_t)__ng_callgate_restore_privs_end) {
-            /* Interrupted inside exit trampoline where PKRU 0x0 was already restored */
+        if ((rip >= (uintptr_t)__ng_callgate_enter_start &&
+             rip < (uintptr_t)__ng_callgate_drop_privs_end) ||
+            (rip >= (uintptr_t)__ng_callgate_restore_privs &&
+             rip < (uintptr_t)__ng_callgate_restore_privs_end)) {
+            /* Interrupted inside entry or exit trampoline where PKRU 0x0 is active or being restored */
             active_domain = NG_DOMAIN_TRUSTED;
         }
     }
@@ -281,6 +287,13 @@ void ng_signal_dispatch(int signum, siginfo_t *info, void *ucontext)
         }
     }
 
+    /* Record authentic domain and RIP upon signal arrival */
+    uint32_t orig_domain = (ts != NULL) ? ts->current_domain : NG_DOMAIN_TRUSTED;
+    uintptr_t orig_rip = 0;
+    if (ucontext != NULL) {
+        orig_rip = (uintptr_t)((ucontext_t *)ucontext)->uc_mcontext.gregs[REG_RIP];
+    }
+
     /*
      * 2. Inspect and Sanitize Saved PKRU in ucontext_t XSAVE State
      */
@@ -291,7 +304,27 @@ void ng_signal_dispatch(int signum, siginfo_t *info, void *ucontext)
      */
     if (g_user_handlers[signum] != NULL) {
         g_user_handlers[signum](signum, info, ucontext);
-        /* Post-handler re-sanitization: prevent in-handler XSAVE PKRU tampering / SROP */
+
+        /*
+         * Post-handler re-sanitization & SROP / Sigreturn Forgery Verification:
+         * If the signal interrupted an untrusted compartment (orig_domain != NG_DOMAIN_TRUSTED):
+         * The user handler MUST NOT be allowed to hijack REG_RIP into the supervisor callgate
+         * trampoline (__ng_callgate_restore_privs) or trick the kernel into restoring PKRU=0.
+         */
+        if (ucontext != NULL && orig_domain != NG_DOMAIN_TRUSTED) {
+            ucontext_t *uc = (ucontext_t *)ucontext;
+            uintptr_t new_rip = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+            if (new_rip != orig_rip &&
+                new_rip >= (uintptr_t)__ng_callgate_enter_start &&
+                new_rip < (uintptr_t)__ng_callgate_enter_end) {
+                fprintf(stderr,
+                        "[NULLGATE SROP TRAP] Untrusted domain %u attempted to forge RIP into callgate trampoline (%p)\n",
+                        orig_domain, (void *)new_rip);
+                raise(SIGKILL);
+                abort();
+            }
+        }
+
         sanitize_ucontext_pkru(ucontext);
         return;
     }
@@ -315,6 +348,7 @@ void ng_signal_dispatch(int signum, siginfo_t *info, void *ucontext)
         sigaddset(&unblock_set, signum);
         sigprocmask(SIG_UNBLOCK, &unblock_set, NULL);
 
+        ng_enter_recover_stack_lease();
         signal(signum, SIG_DFL);
         raise(signum);
         abort();

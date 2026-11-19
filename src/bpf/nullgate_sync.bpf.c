@@ -62,7 +62,11 @@ int BPF_PROG(ng_socket_create, int family, int type, int protocol, int kern)
         return 0;
 
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && !ng_policy_is_syscall_allowed(pol, __NR_socket)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+    if (!ng_policy_is_syscall_allowed(pol, __NR_socket)) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
         return -EPERM;
     }
@@ -96,12 +100,16 @@ int BPF_PROG(ng_socket_connect, struct socket *sock, struct sockaddr *address, i
     }
 
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && (pol->policy_flags & NG_POLICY_DEPUTY_GUARD)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+    if (pol->policy_flags & NG_POLICY_DEPUTY_GUARD) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
         return -EPERM;
     }
 
-    if (pol && !ng_policy_is_syscall_allowed(pol, __NR_connect)) {
+    if (!ng_policy_is_syscall_allowed(pol, __NR_connect)) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
         return -EPERM;
     }
@@ -126,7 +134,11 @@ int BPF_PROG(ng_socket_bind, struct socket *sock, struct sockaddr *address, int 
         return 0;
 
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && (pol->policy_flags & NG_POLICY_DEPUTY_GUARD)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+    if (pol->policy_flags & NG_POLICY_DEPUTY_GUARD) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
         return -EPERM;
     }
@@ -150,7 +162,11 @@ int BPF_PROG(ng_socket_sendmsg, struct socket *sock, struct msghdr *msg, int siz
         return 0;
 
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && (pol->policy_flags & NG_POLICY_DEPUTY_GUARD)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+    if (pol->policy_flags & NG_POLICY_DEPUTY_GUARD) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
         return -EPERM;
     }
@@ -174,7 +190,11 @@ int BPF_PROG(ng_socket_recvmsg, struct socket *sock, struct msghdr *msg, int siz
         return 0;
 
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && (pol->policy_flags & NG_POLICY_DEPUTY_GUARD)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        return -EPERM;
+    }
+    if (pol->policy_flags & NG_POLICY_DEPUTY_GUARD) {
         ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
         return -EPERM;
     }
@@ -197,9 +217,13 @@ int BPF_PROG(ng_file_permission, struct file *file, int mask)
     if (live_dom == NG_DOMAIN_TRUSTED)
         return 0;
 
-    if ((tctx->domain_policy_mask & NG_POLICY_STRICT_SYSCALL) && (mask & 0x02 /* MAY_WRITE */)) {
+    if (mask & 0x02 /* MAY_WRITE */) {
         struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-        if (pol && (pol->policy_flags & NG_POLICY_STRICT_SYSCALL)) {
+        if (!pol) {
+            ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+            return -EPERM;
+        }
+        if (pol->policy_flags & NG_POLICY_STRICT_SYSCALL) {
             ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
             return -EPERM;
         }
@@ -250,11 +274,90 @@ int ng_trace_raw_sys_enter(struct trace_event_raw_sys_enter *ctx_raw)
             bpf_send_signal(SIGSEGV);
             return 0;
         }
+
+        /*
+         * Confused Deputy Range & Integer Wraparound Checks:
+         * Verify buffer ranges on scalar I/O operations (read: 0, write: 1, pread64: 17, pwrite64: 18)
+         * to prevent attackers from specifying ranges that overlap trusted state or wrap around.
+         */
+        if (syscall_id == 0 || syscall_id == 1 || syscall_id == 17 || syscall_id == 18) {
+            __u64 buf = a1;
+            __u64 len = a2;
+            if (len > 0) {
+                if (buf + len < buf || (buf < ts_end && (buf + len) > ts_start)) {
+                    ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
+                    bpf_send_signal(SIGSEGV);
+                    return 0;
+                }
+            }
+        }
+
+        /*
+         * Confused Deputy Vectored & Scatter-Gather I/O Checks (SEC-03):
+         * Inspect user iovec arrays for readv(19), writev(20), preadv(295), pwritev(296),
+         * vmsplice(278), process_vm_readv(310), process_vm_writev(311), sendmsg(46), recvmsg(47).
+         */
+        if (syscall_id == 19 || syscall_id == 20 || syscall_id == 295 || syscall_id == 296 ||
+            syscall_id == 278 || syscall_id == 310 || syscall_id == 311 ||
+            syscall_id == 46 || syscall_id == 47) {
+            __u64 iov_ptr = a1;
+            __u64 iov_cnt = a2;
+
+            if (syscall_id == 46 || syscall_id == 47) {
+                iov_ptr = 0;
+                iov_cnt = 0;
+                if (a1 != 0) {
+                    (void)bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), (const void *)(a1 + 16));
+                    (void)bpf_probe_read_user(&iov_cnt, sizeof(iov_cnt), (const void *)(a1 + 24));
+                }
+            }
+
+            if (iov_ptr != 0 && iov_cnt > 0) {
+                if (iov_ptr >= ts_start && iov_ptr < ts_end) {
+                    ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
+                    bpf_send_signal(SIGSEGV);
+                    return 0;
+                }
+
+                #pragma unroll
+                for (int i = 0; i < 8; i++) {
+                    if ((__u64)i >= iov_cnt)
+                        break;
+                    struct {
+                        __u64 base;
+                        __u64 len;
+                    } ventry = {0, 0};
+                    if (bpf_probe_read_user(&ventry, sizeof(ventry), (const void *)(iov_ptr + i * sizeof(ventry))) == 0) {
+                        __u64 ibase = ventry.base;
+                        __u64 ilen = ventry.len;
+                        if (ilen > 0) {
+                            if (ibase + ilen < ibase || (ibase < ts_end && (ibase + ilen) > ts_start)) {
+                                ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
+                                bpf_send_signal(SIGSEGV);
+                                return 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Block pidfd_getfd(438) cross-domain file descriptor theft */
+        if (syscall_id == 438) {
+            ng_emit_audit_event(tctx, live_dom, NG_EVENT_DEPUTY_VIOLATION, -EPERM);
+            bpf_send_signal(SIGSEGV);
+            return 0;
+        }
     }
 
     /* Syscall Whitelist Verification */
     struct ng_domain_policy *pol = ng_get_domain_policy(live_dom);
-    if (pol && (pol->policy_flags & NG_POLICY_STRICT_SYSCALL)) {
+    if (!pol) {
+        ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
+        bpf_send_signal(SIGSYS);
+        return 0;
+    }
+    if (pol->policy_flags & NG_POLICY_STRICT_SYSCALL) {
         if (!ng_policy_is_syscall_allowed(pol, (__u32)syscall_id)) {
             ng_emit_audit_event(tctx, live_dom, NG_EVENT_SYSCALL_DENIED, -EPERM);
             bpf_send_signal(SIGSYS);
