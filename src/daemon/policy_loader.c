@@ -36,7 +36,9 @@ int ng_daemon_init_policies(void)
                                         NG_POLICY_BLOCK_PTRACE |
                                         NG_POLICY_BLOCK_PROCFS |
                                         NG_POLICY_BLOCK_BPF |
-                                        NG_POLICY_INHERIT_FORK;
+                                        NG_POLICY_INHERIT_FORK |
+                                        NG_POLICY_BLOCK_URING |
+                                        NG_POLICY_DEPUTY_GUARD;
     g_domain_policies[1].max_memory_pages = 1024; /* 4MB */
     strncpy((char *)g_domain_policies[1].domain_name, "worker", sizeof(g_domain_policies[1].domain_name) - 1);
     memset(g_domain_policies[1].allowed_syscall_mask, 0xFF, sizeof(g_domain_policies[1].allowed_syscall_mask));
@@ -48,7 +50,9 @@ int ng_daemon_init_policies(void)
                                         NG_POLICY_BLOCK_PTRACE |
                                         NG_POLICY_BLOCK_PROCFS |
                                         NG_POLICY_BLOCK_BPF |
-                                        NG_POLICY_INHERIT_FORK;
+                                        NG_POLICY_INHERIT_FORK |
+                                        NG_POLICY_BLOCK_URING |
+                                        NG_POLICY_DEPUTY_GUARD;
     g_domain_policies[2].max_memory_pages = 512; /* 2MB */
     strncpy((char *)g_domain_policies[2].domain_name, "isolated", sizeof(g_domain_policies[2].domain_name) - 1);
     memset(g_domain_policies[2].allowed_syscall_mask, 0xFF, sizeof(g_domain_policies[2].allowed_syscall_mask));
@@ -61,7 +65,9 @@ int ng_daemon_init_policies(void)
                                             NG_POLICY_BLOCK_PTRACE |
                                             NG_POLICY_BLOCK_PROCFS |
                                             NG_POLICY_BLOCK_BPF |
-                                            NG_POLICY_INHERIT_FORK;
+                                            NG_POLICY_INHERIT_FORK |
+                                            NG_POLICY_BLOCK_URING |
+                                            NG_POLICY_DEPUTY_GUARD;
         g_domain_policies[d].max_memory_pages = 256; /* 1MB */
         snprintf((char *)g_domain_policies[d].domain_name, sizeof(g_domain_policies[d].domain_name), "domain_%u", d);
         memset(g_domain_policies[d].allowed_syscall_mask, 0xFF, sizeof(g_domain_policies[d].allowed_syscall_mask));
@@ -143,6 +149,33 @@ int ng_daemon_get_cached_policy(uint32_t domain_id, struct ng_domain_policy *out
     }
 
     *out_pol = g_domain_policies[domain_id];
+    return 0;
+}
+
+int ng_daemon_configure_strict_syscall_whitelist(uint32_t domain_id, const uint32_t *allowed_nrs, size_t count)
+{
+    if (domain_id >= NG_MAX_DOMAINS)
+        return -EINVAL;
+
+    if (!g_policies_initialized) {
+        int err = ng_daemon_init_policies();
+        if (err < 0)
+            return err;
+    }
+
+    struct ng_domain_policy *pol = &g_domain_policies[domain_id];
+    pol->policy_flags |= (NG_POLICY_STRICT_SYSCALL | NG_POLICY_BLOCK_URING | NG_POLICY_DEPUTY_GUARD);
+    memset(pol->allowed_syscall_mask, 0, sizeof(pol->allowed_syscall_mask));
+
+    if (allowed_nrs) {
+        for (size_t i = 0; i < count; i++) {
+            ng_policy_allow_syscall(pol, allowed_nrs[i]);
+        }
+    }
+
+    if (g_bpf_skel) {
+        return ng_daemon_load_domain_policy(domain_id, pol);
+    }
     return 0;
 }
 

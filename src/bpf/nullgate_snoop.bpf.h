@@ -190,6 +190,8 @@ int BPF_PROG(ng_file_open, struct file *file)
         is_sensitive = true;
     } else if (len == 8 && __builtin_memcmp(name, "environ", 8) == 0) {
         is_sensitive = true;
+    } else if (len == 5 && __builtin_memcmp(name, "auxv", 5) == 0) {
+        is_sensitive = true;
     }
 
     if (is_sensitive) {

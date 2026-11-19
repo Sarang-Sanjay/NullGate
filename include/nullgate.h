@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <signal.h>
 #include "nullgate_abi.h"
 
 #ifdef __cplusplus
@@ -23,6 +24,9 @@ extern "C" {
 #define NG_ERR_LOCKED           -5  /* Domain configuration is locked */
 #define NG_ERR_NOMEM            -6  /* Out of memory */
 #define NG_ERR_PERM             -7  /* Permission denied by BPF LSM policy */
+
+/* Alternate Signal Stack Configuration */
+#define NG_SIGNAL_ALTSTACK_SIZE  65536U
 
 /* Callback type for compartmentalized functions */
 typedef uint64_t (*ng_compartment_fn)(void *arg);
@@ -85,6 +89,34 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg);
  * ng_get_active_domain - Return the current active domain ID for the calling thread.
  */
 uint32_t ng_get_active_domain(void);
+
+/**
+ * ng_signal_register_handler - Register a domain-aware signal handler.
+ * @signum: POSIX signal number (e.g. SIGALRM, SIGUSR1)
+ * @handler: Signal handler function taking (signum, siginfo, ucontext)
+ *
+ * Returns NG_SUCCESS (0) on success, or a negative NG_ERR_* code on failure.
+ */
+int ng_signal_register_handler(int signum, void (*handler)(int, siginfo_t *, void *));
+
+/**
+ * ng_signal_get_altstack - Query configured alternate signal stack boundaries.
+ * @base: Output pointer to receive altstack base address
+ * @size: Output pointer to receive altstack size in bytes
+ *
+ * Returns NG_SUCCESS (0) on success, or a negative NG_ERR_* code on failure.
+ */
+int ng_signal_get_altstack(void **base, size_t *size);
+
+/**
+ * ng_signal_get_violation_count - Query total hardware PKU memory violations observed.
+ */
+uint64_t ng_signal_get_violation_count(void);
+
+/**
+ * ng_get_trusted_state_addr - Retrieve virtual memory address of Key 1 protected state.
+ */
+uintptr_t ng_get_trusted_state_addr(void);
 
 /**
  * ng_strerror - Return human-readable string for an error code.

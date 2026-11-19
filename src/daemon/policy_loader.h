@@ -59,6 +59,19 @@ int ng_daemon_load_domain_policy(uint32_t domain_id, const struct ng_domain_poli
 int ng_daemon_load_domain_policy_skel(struct nullgate_bpf *skel, uint32_t domain_id, const struct ng_domain_policy *pol);
 
 /**
+ * ng_daemon_configure_strict_syscall_whitelist - Configure strict syscall whitelist for a domain.
+ * Sets NG_POLICY_STRICT_SYSCALL, NG_POLICY_BLOCK_URING, and NG_POLICY_DEPUTY_GUARD flags,
+ * resets the 256-bit allowed syscall mask, and allows only specified syscalls.
+ *
+ * @domain_id: Target domain index
+ * @allowed_nrs: Array of syscall numbers (< 256) to allow, or NULL for empty whitelist
+ * @count: Number of elements in allowed_nrs
+ *
+ * Returns 0 on success, or negative errno on failure.
+ */
+int ng_daemon_configure_strict_syscall_whitelist(uint32_t domain_id, const uint32_t *allowed_nrs, size_t count);
+
+/**
  * ng_daemon_get_cached_policy - Retrieve locally cached policy for a domain.
  *
  * @domain_id: Target domain index

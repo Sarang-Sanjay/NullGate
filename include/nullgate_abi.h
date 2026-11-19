@@ -34,12 +34,15 @@ typedef int                    __s32;
 /* Task Context Flags */
 #define NG_TASK_LOCKED              (1ULL << 0)
 
-/* Domain Policy Bitmasks (Phase 2) */
+/* Domain Policy Bitmasks (Phase 2 & Phase 3) */
 #define NG_POLICY_STRICT_WX         (1U << 0)
 #define NG_POLICY_BLOCK_PTRACE      (1U << 1)
 #define NG_POLICY_BLOCK_PROCFS      (1U << 2)
 #define NG_POLICY_BLOCK_BPF         (1U << 3)
 #define NG_POLICY_INHERIT_FORK      (1U << 4)
+#define NG_POLICY_BLOCK_URING       (1U << 5)
+#define NG_POLICY_STRICT_SYSCALL    (1U << 6)
+#define NG_POLICY_DEPUTY_GUARD      (1U << 7)
 
 /* Audit Event Types */
 #define NG_EVENT_REGISTER           1
@@ -50,6 +53,10 @@ typedef int                    __s32;
 #define NG_EVENT_BPF_ATTEMPT        6
 #define NG_EVENT_MMAP_VIOLATION     7
 #define NG_EVENT_FORK_INHERIT       8
+#define NG_EVENT_URING_ATTEMPT      9
+#define NG_EVENT_SYSCALL_DENIED     10
+#define NG_EVENT_DEPUTY_VIOLATION   11
+#define NG_EVENT_SIGNAL_RECOVERY    12
 
 /*
  * struct ng_trusted_state:
@@ -63,7 +70,11 @@ struct ng_trusted_state {
     __u32 pad0;                  /* Offset 12: Explicit padding for 64-bit alignment */
     __u64 violation_count;      /* Offset 16: Monotonic violation counter */
     __u64 hmac_seq;             /* Offset 24: Ring-buffer HMAC sequence tracker */
-    __u8  _reserved[4096 - 32]; /* Offset 32: Pads structure to exactly one 4KB page */
+    __u64 altstack_base;        /* Offset 32: Base address of trusted alternate signal stack */
+    __u64 altstack_size;        /* Offset 40: Size of trusted alternate signal stack in bytes */
+    __u32 in_signal_handler;    /* Offset 48: 1 if executing signal handler, 0 otherwise */
+    __u32 pad1;                  /* Offset 52: Explicit padding for 64-bit alignment */
+    __u8  _reserved[4096 - 56]; /* Offset 56: Pads structure to exactly one 4KB page */
 } __attribute__((aligned(4096)));
 
 /*
@@ -106,6 +117,9 @@ struct ng_audit_event {
 _Static_assert(sizeof(struct ng_trusted_state) == 4096, "ng_trusted_state must be exactly 4096 bytes");
 _Static_assert(offsetof(struct ng_trusted_state, trusted_rsp) == 0, "trusted_rsp offset must be 0");
 _Static_assert(offsetof(struct ng_trusted_state, current_domain) == 8, "current_domain offset must be 8");
+_Static_assert(offsetof(struct ng_trusted_state, altstack_base) == 32, "altstack_base offset must be 32");
+_Static_assert(offsetof(struct ng_trusted_state, altstack_size) == 40, "altstack_size offset must be 40");
+_Static_assert(offsetof(struct ng_trusted_state, in_signal_handler) == 48, "in_signal_handler offset must be 48");
 _Static_assert(sizeof(struct ng_task_ctx) == 56, "ng_task_ctx size must be exactly 56 bytes");
 _Static_assert(offsetof(struct ng_task_ctx, active_domain) == 0, "active_domain offset must be 0");
 _Static_assert(offsetof(struct ng_task_ctx, trusted_state_addr) == 8, "trusted_state_addr offset must be 8");

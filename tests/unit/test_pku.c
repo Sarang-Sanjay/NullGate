@@ -116,14 +116,9 @@ int main(void)
     ret = ng_domain_protect(1, page, 4096, PROT_READ | PROT_WRITE);
     assert(ret == NG_SUCCESS);
 
-    /* 5. Install SIGSEGV handler */
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = segv_handler;
-    sa.sa_flags = SA_SIGINFO;
-    sigemptyset(&sa.sa_mask);
-    ret = sigaction(SIGSEGV, &sa, NULL);
-    assert(ret == 0);
+    /* 5. Install SIGSEGV handler via NullGate signal subsystem */
+    ret = ng_signal_register_handler(SIGSEGV, segv_handler);
+    assert(ret == NG_SUCCESS);
 
     /* 6. Enter Domain 1: Authorized write and read */
     printf("[TEST] Executing authorized access in Domain 1...\n");
@@ -142,6 +137,17 @@ int main(void)
     assert(g_segv_is_pku == 1);
     printf("[TEST] Hardware PKU violation successfully caught (SEGV_PKUERR).\n");
     printf("[TEST] Clean recovery confirmed across CET call gate.\n");
+
+    /* 7b. CRIT-02 Verification: Domain 2 probe on Domain 1 execution stack must fault with SEGV_PKUERR */
+    printf("[TEST] Executing cross-compartment stack probe (Domain 2 -> Domain 1 stack)...\n");
+    g_segv_caught = 0;
+    g_segv_is_pku = 0;
+    uint64_t res_stack = ng_enter(2, worker_domain_2_unauthorized, stack1);
+    (void)res_stack;
+    assert(res_stack == 0xCAFE);
+    assert(g_segv_caught == 1);
+    assert(g_segv_is_pku == 1);
+    printf("[TEST] Cross-compartment stack isolation verified: Domain 1 stack hardware-protected under PKU!\n");
 
     /* 8. Cleanup */
     munmap(page, 4096);

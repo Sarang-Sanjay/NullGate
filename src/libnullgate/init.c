@@ -18,6 +18,7 @@
 #include "nullgate_abi.h"
 #include "pku.h"
 #include "callgate.h"
+#include "signal.h"
 
 static pthread_mutex_t g_domain_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -33,8 +34,68 @@ struct ng_domain_desc {
 static struct ng_domain_desc g_domains[NG_MAX_DOMAINS];
 __attribute__((visibility("hidden")))
 struct ng_trusted_state *g_trusted_state = NULL;
+
+/* Per-Thread Trusted State & Altstack (Fix HIGH-01, HIGH-03) */
+__thread struct ng_trusted_state *t_trusted_state __attribute__((tls_model("initial-exec"))) = NULL;
+static __thread void *t_altstack_buf = NULL;
+
 static bool g_rt_initialized = false;
 static bool g_bpf_registered = false;
+
+struct ng_trusted_state *ng_get_thread_state(void)
+{
+    if (__builtin_expect(t_trusted_state != NULL, 1)) {
+        return t_trusted_state;
+    }
+
+    /* 1. Allocate dedicated 4KB page for this thread's ng_trusted_state */
+    void *page = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        return NULL;
+    }
+
+    struct ng_trusted_state *ts = (struct ng_trusted_state *)page;
+    memset(ts, 0, sizeof(*ts));
+    ts->current_domain = NG_DOMAIN_TRUSTED;
+
+    int key1 = pku_get_trusted_key();
+    if (key1 >= 0) {
+        (void)pkey_mprotect(page, 4096, PROT_READ | PROT_WRITE, key1);
+    }
+    (void)mlock(page, 4096);
+
+    /* 2. Allocate and register per-thread alternate signal stack (Fix HIGH-01) */
+    void *altstack = mmap(NULL, NG_SIGNAL_ALTSTACK_SIZE,
+                          PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (altstack != MAP_FAILED) {
+        stack_t ss;
+        memset(&ss, 0, sizeof(ss));
+        ss.ss_sp = altstack;
+        ss.ss_size = NG_SIGNAL_ALTSTACK_SIZE;
+        ss.ss_flags = 0;
+        if (sigaltstack(&ss, NULL) == 0) {
+            t_altstack_buf = altstack;
+            ts->altstack_base = (uint64_t)(uintptr_t)altstack;
+            ts->altstack_size = (uint64_t)NG_SIGNAL_ALTSTACK_SIZE;
+        } else {
+            munmap(altstack, NG_SIGNAL_ALTSTACK_SIZE);
+        }
+    }
+
+    /* 3. Register thread's state page with eBPF LSM via prctl */
+    long prctl_ret = prctl((int)NG_PRCTL_MAGIC_REGISTER, (unsigned long)page, 0, 0, 0);
+    if (prctl_ret == 0) {
+        g_bpf_registered = true;
+    }
+
+    t_trusted_state = ts;
+    if (g_trusted_state == NULL) {
+        g_trusted_state = ts;
+    }
+    return ts;
+}
 
 /*
  * POSIX pthread_atfork handlers:
@@ -80,63 +141,28 @@ int ng_init(void)
         return ret;
     }
 
-    /* 2. Map dedicated 4KB page for struct ng_trusted_state */
-    void *page = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (page == MAP_FAILED) {
+    /* 2. Initialize main thread trusted state & per-thread altstack */
+    struct ng_trusted_state *main_ts = ng_get_thread_state();
+    if (!main_ts) {
         pthread_mutex_unlock(&g_domain_mutex);
         return NG_ERR_NOMEM;
     }
+    g_trusted_state = main_ts;
 
-    g_trusted_state = (struct ng_trusted_state *)page;
-    memset(g_trusted_state, 0, sizeof(struct ng_trusted_state));
-    g_trusted_state->current_domain = NG_DOMAIN_TRUSTED;
-
-    /* 3. Protect trusted state page with Key 1 */
-    int key1 = pku_get_trusted_key();
-    if (key1 < 0) {
-        munmap(page, 4096);
-        pthread_mutex_unlock(&g_domain_mutex);
-        return NG_ERR_PKU;
-    }
-
-    if (pkey_mprotect(g_trusted_state, 4096, PROT_READ | PROT_WRITE, key1) != 0) {
-        munmap(page, 4096);
-        pthread_mutex_unlock(&g_domain_mutex);
-        return NG_ERR_PKU;
-    }
-
-    /*
-     * Lock trusted state page in physical RAM (RAM-locked reader invariant).
-     * Prevents page faults when eBPF LSM performs bpf_probe_read_user.
-     */
-    (void)mlock(g_trusted_state, 4096);
-
-    /* 4. Register with eBPF LSM via custom one-shot prctl */
-    long prctl_ret = prctl((int)NG_PRCTL_MAGIC_REGISTER, (unsigned long)g_trusted_state, 0, 0, 0);
-    if (prctl_ret == 0) {
-        g_bpf_registered = true;
-    } else if (errno == EPERM) {
-        /* Task context already locked */
-        munmap(page, 4096);
-        pthread_mutex_unlock(&g_domain_mutex);
-        return NG_ERR_LOCKED;
-    } else {
-        /*
-         * In standalone unit test or offline mode (daemon not attached),
-         * kernel returns -ENOSYS or -EINVAL for unhandled prctl.
-         * PKU and CET call-gates remain active.
-         */
-        g_bpf_registered = false;
-    }
-
-    /* 5. Initialize Domain 0 (Default OS / Runtime Domain) */
+    /* 3. Initialize Domain 0 (Default OS / Runtime Domain) */
     g_domains[NG_DOMAIN_TRUSTED].allocated = true;
     g_domains[NG_DOMAIN_TRUSTED].pkey = NG_PKEY_DEFAULT;
     g_domains[NG_DOMAIN_TRUSTED].target_pkru = pku_build_pkru_mask(NG_DOMAIN_TRUSTED);
 
-    /* 6. Register pthread_atfork handlers for multi-process safety across fork() */
+    /* 4. Register pthread_atfork handlers for multi-process safety across fork() */
     pthread_atfork(ng_atfork_prepare, ng_atfork_parent, ng_atfork_child);
+
+    /* 5. Initialize asynchronous signal interception subsystem */
+    ret = ng_signal_subsystem_init();
+    if (ret != NG_SUCCESS) {
+        pthread_mutex_unlock(&g_domain_mutex);
+        return ret;
+    }
 
     g_rt_initialized = true;
     pthread_mutex_unlock(&g_domain_mutex);
@@ -147,6 +173,12 @@ __attribute__((constructor))
 static void ng_rt_init(void)
 {
     (void)ng_init();
+}
+
+__attribute__((destructor))
+static void ng_rt_fini(void)
+{
+    ng_signal_subsystem_cleanup();
 }
 
 int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size)
@@ -175,10 +207,41 @@ int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size)
         return NG_ERR_INVALID;
     }
 
+    /* Require 4096-byte page alignment for stack_base and stack_size */
+    if (((uintptr_t)stack_base & 0xFFFULL) != 0 || (stack_size & 0xFFFULL) != 0) {
+        pthread_mutex_unlock(&g_domain_mutex);
+        return NG_ERR_INVALID;
+    }
+
     /* Check for pointer arithmetic overflow */
     if ((uintptr_t)stack_base + stack_size < (uintptr_t)stack_base) {
         pthread_mutex_unlock(&g_domain_mutex);
         return NG_ERR_INVALID;
+    }
+
+    uintptr_t req_start = (uintptr_t)stack_base;
+    uintptr_t req_end = req_start + stack_size;
+
+    /* Verify no overlap with g_trusted_state */
+    if (g_trusted_state) {
+        uintptr_t ts_start = (uintptr_t)g_trusted_state;
+        uintptr_t ts_end = ts_start + 4096;
+        if (req_start < ts_end && req_end > ts_start) {
+            pthread_mutex_unlock(&g_domain_mutex);
+            return NG_ERR_PERM;
+        }
+    }
+
+    /* Verify no overlap with existing domain stacks */
+    for (uint32_t d = 0; d < NG_MAX_DOMAINS; d++) {
+        if (g_domains[d].allocated && g_domains[d].stack_base && g_domains[d].stack_size) {
+            uintptr_t d_start = (uintptr_t)g_domains[d].stack_base;
+            uintptr_t d_end = d_start + g_domains[d].stack_size;
+            if (req_start < d_end && req_end > d_start) {
+                pthread_mutex_unlock(&g_domain_mutex);
+                return NG_ERR_PERM;
+            }
+        }
     }
 
     /*
@@ -191,6 +254,15 @@ int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size)
     /* Allocate dedicated hardware PKU key */
     int pkey = pku_alloc_domain_key(domain_id);
     if (pkey < 0) {
+        pthread_mutex_unlock(&g_domain_mutex);
+        return NG_ERR_PKU;
+    }
+
+    /*
+     * Hardware Compartment Stack Isolation (Fix CRIT-02):
+     * Tag stack memory with the domain's dedicated PKU key.
+     */
+    if (pkey_mprotect(stack_base, stack_size, PROT_READ | PROT_WRITE, pkey) != 0) {
         pthread_mutex_unlock(&g_domain_mutex);
         return NG_ERR_PKU;
     }
@@ -292,6 +364,10 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
     if (domain_id == NG_DOMAIN_TRUSTED || domain_id >= NG_MAX_DOMAINS)
         return (uint64_t)-1;
 
+    struct ng_trusted_state *tstate = ng_get_thread_state();
+    if (!tstate)
+        return (uint64_t)-1;
+
     if (!g_domains[domain_id].allocated || !fn)
         return (uint64_t)-1;
 
@@ -302,19 +378,25 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
      * Dispatch atomic call-gate transition:
      * Drops privileges via WRPKRU, invokes fn(arg) on compartment stack,
      * restores trusted PKRU (0x0), and returns the 64-bit result.
-     * Synchronized via g_domain_mutex to guarantee thread-safety across concurrent callers.
+     * Concurrency is fully parallel per thread without global mutex serialization!
      */
-    pthread_mutex_lock(&g_domain_mutex);
-    uint64_t res = ng_callgate_invoke(domain_id, fn, arg, stack_top, target_pkru, g_trusted_state);
-    pthread_mutex_unlock(&g_domain_mutex);
-    return res;
+    return ng_callgate_invoke(domain_id, fn, arg, stack_top, target_pkru, tstate);
 }
 
 uint32_t ng_get_active_domain(void)
 {
-    if (!g_trusted_state)
-        return NG_DOMAIN_TRUSTED;
-    return g_trusted_state->current_domain;
+    if (t_trusted_state)
+        return t_trusted_state->current_domain;
+    if (g_trusted_state)
+        return g_trusted_state->current_domain;
+    return NG_DOMAIN_TRUSTED;
+}
+
+uintptr_t ng_get_trusted_state_addr(void)
+{
+    if (t_trusted_state)
+        return (uintptr_t)t_trusted_state;
+    return (uintptr_t)g_trusted_state;
 }
 
 const char *ng_strerror(int err)

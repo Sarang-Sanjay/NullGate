@@ -277,9 +277,11 @@ static void test_cross_domain_isolation(void)
 /* ========================================================================= */
 static volatile sig_atomic_t g_signal_count = 0;
 
-static void alrm_handler(int sig)
+static void alrm_handler(int sig, siginfo_t *info, void *ucontext)
 {
     (void)sig;
+    (void)info;
+    (void)ucontext;
     g_signal_count++;
 }
 
@@ -298,10 +300,7 @@ static void test_signal_interruption(void)
     void *stack = mmap(NULL, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     ng_domain_create(2, stack, 16384);
 
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = alrm_handler;
-    sigaction(SIGALRM, &sa, NULL);
+    ng_signal_register_handler(SIGALRM, alrm_handler);
 
     /* Arm timer to fire every 200 microseconds */
     struct itimerval itv;

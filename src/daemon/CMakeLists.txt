@@ -19,6 +19,7 @@ target_include_directories(nullgate-daemon PRIVATE
 
 target_link_libraries(nullgate-daemon PRIVATE
     BPF::libbpf
+    crypto
 )
 
 # Enforce Intel CET (IBT + SHSTK) on nullgate-daemon executable

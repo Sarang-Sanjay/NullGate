@@ -1,0 +1,139 @@
+diff -uprN a/src/core/ngx_cycle.h b/src/core/ngx_cycle.h
+--- a/src/core/ngx_cycle.h	2024-05-29 17:33:32.000000000 +0000
++++ b/src/core/ngx_cycle.h	2026-11-19 12:00:00.000000000 +0000
+@@ -14,6 +14,13 @@
+ #include <ngx_core.h>
+ 
+ 
++/* NullGate Secret Vault Key 2 Isolation */
++extern void *ngx_nullgate_secret_vault;
++extern void *ngx_nullgate_worker_stack;
++extern int   ngx_nullgate_enabled;
++void ngx_nullgate_init_worker(void);
++
++
+ #ifndef NGX_CYCLE_POOL_SIZE
+ #define NGX_CYCLE_POOL_SIZE     NGX_DEFAULT_POOL_SIZE
+ #endif
+diff -uprN a/src/os/unix/ngx_process_cycle.c b/src/os/unix/ngx_process_cycle.c
+--- a/src/os/unix/ngx_process_cycle.c	2024-05-29 17:33:32.000000000 +0000
++++ b/src/os/unix/ngx_process_cycle.c	2026-11-19 12:00:00.000000000 +0000
+@@ -11,6 +11,60 @@
+ #include <ngx_event.h>
+ #include <ngx_channel.h>
+ 
++#if (NGX_HAVE_NULLGATE)
++#include <nullgate.h>
++#include <sys/mman.h>
++
++void *ngx_nullgate_secret_vault = NULL;
++void *ngx_nullgate_worker_stack = NULL;
++int   ngx_nullgate_enabled = 0;
++
++void ngx_nullgate_init_worker(void)
++{
++    if (ng_init() != NG_SUCCESS) {
++        fprintf(stderr, "[NULLGATE] Worker ng_init() failed\n");
++        return;
++    }
++
++    /* Allocate 64KB isolated stack for Domain 1 (HTTP Request Parsing) */
++    ngx_nullgate_worker_stack = mmap(NULL, 64 * 1024, PROT_READ | PROT_WRITE,
++                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++    if (ngx_nullgate_worker_stack == MAP_FAILED) {
++        perror("[NULLGATE] mmap worker stack failed");
++        return;
++    }
++
++    if (ng_domain_create(1, ngx_nullgate_worker_stack, 64 * 1024) != NG_SUCCESS) {
++        fprintf(stderr, "[NULLGATE] ng_domain_create(1) failed\n");
++        return;
++    }
++
++    /* Allocate 4KB secret vault isolated under PKU Key 2 */
++    ngx_nullgate_secret_vault = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
++                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++    if (ngx_nullgate_secret_vault == MAP_FAILED) {
++        perror("[NULLGATE] mmap secret vault failed");
++        return;
++    }
++
++    if (ng_domain_create(2, ngx_nullgate_worker_stack, 64 * 1024) != NG_SUCCESS) {
++        fprintf(stderr, "[NULLGATE] ng_domain_create(2) failed\n");
++        return;
++    }
++
++    /* Populate vault with sensitive TLS session ticket key material */
++    memcpy(ngx_nullgate_secret_vault,
++           "NULLGATE_SESSION_TICKET_KEY_2026_TOP_SECRET_VAULT_BYTES", 56);
++
++    /* Protect secret vault exclusively under Key 2 */
++    if (ng_domain_protect(2, ngx_nullgate_secret_vault, 4096, PROT_READ | PROT_WRITE) != NG_SUCCESS) {
++        fprintf(stderr, "[NULLGATE] ng_domain_protect(2) failed\n");
++        return;
++    }
++
++    ngx_nullgate_enabled = 1;
++    printf("[NULLGATE] Worker compartmentalization initialized: Vault protected under Key 2\n");
++}
++#endif
+ 
+ static void ngx_start_worker_processes(ngx_cycle_t *cycle, ngx_int_t n,
+     ngx_int_t type);
+@@ -750,6 +804,10 @@ ngx_worker_process_init(ngx_cycle_t *cyc
+         }
+     }
+ 
++#if (NGX_HAVE_NULLGATE)
++    ngx_nullgate_init_worker();
++#endif
++
+     for (i = 0; cycle->modules[i]; i++) {
+         if (cycle->modules[i]->init_process) {
+             if (cycle->modules[i]->init_process(cycle) == NGX_ERROR) {
+diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
+--- a/src/http/ngx_http_request.c	2024-05-29 17:33:32.000000000 +0000
++++ b/src/http/ngx_http_request.c	2026-11-19 12:00:00.000000000 +0000
+@@ -9,6 +9,25 @@
+ #include <ngx_core.h>
+ #include <ngx_http.h>
+ 
++#if (NGX_HAVE_NULLGATE)
++#include <nullgate.h>
++
++static void ngx_http_process_request_line_inner(ngx_event_t *rev);
++
++static uint64_t ngx_http_process_request_line_compartment_cb(void *arg)
++{
++    ngx_event_t *rev = (ngx_event_t *)arg;
++    ngx_http_process_request_line_inner(rev);
++    return 0;
++}
++
++static void
++ngx_http_process_request_line_compartment(ngx_event_t *rev)
++{
++    /* Dispatch request parsing inside Domain 1 via CET Call-Gate */
++    (void)ng_enter(1, ngx_http_process_request_line_compartment_cb, rev);
++}
++#endif
+ 
+ static void ngx_http_wait_request_handler(ngx_event_t *ev);
+ static void ngx_http_process_request_line(ngx_event_t *rev);
+@@ -1004,6 +1023,16 @@ ngx_http_process_request_line(ngx_event_
++    /* Route into NullGate compartment if enabled */
++#if (NGX_HAVE_NULLGATE)
++    if (ngx_nullgate_enabled && ng_get_active_domain() != 1) {
++        ngx_http_process_request_line_compartment(rev);
++        return;
++    }
++#endif
++    ngx_http_process_request_line_inner(rev);
++}
++
++static void
++ngx_http_process_request_line_inner(ngx_event_t *rev)
++{
+     ssize_t              n;
+     ngx_int_t            rc, rv;
+     ngx_str_t            host;

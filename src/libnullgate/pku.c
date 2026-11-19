@@ -20,7 +20,18 @@
 
 static int g_domain_keys[NG_MAX_DOMAINS];
 static int g_trusted_key = -1;
+static uint32_t g_xsave_pkru_offset = 0;
 static bool g_pku_initialized = false;
+
+int pku_get_xsave_pkru_offset(void)
+{
+    if (g_xsave_pkru_offset == 0) {
+        unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
+        __cpuid_count(0xd, 9, eax, ebx, ecx, edx);
+        g_xsave_pkru_offset = (ebx != 0) ? ebx : 2688;
+    }
+    return (int)g_xsave_pkru_offset;
+}
 
 int pku_init(void)
 {

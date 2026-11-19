@@ -22,6 +22,7 @@ NG_EMIT_GNU_PROPERTY_NOTE
 .type ng_callgate_invoke, @function
 
 ng_callgate_invoke:
+    .cfi_startproc
     /*
      * 1. Intel CET Indirect Branch Tracking (IBT) Landing Pad
      */
@@ -31,11 +32,32 @@ ng_callgate_invoke:
      * 2. Save Caller Callee-Saved Registers onto the Trusted Stack
      */
     pushq   %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
     pushq   %rbp
+    .cfi_def_cfa_offset 24
+    .cfi_offset %rbp, -24
     pushq   %r12
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r12, -32
     pushq   %r13
+    .cfi_def_cfa_offset 40
+    .cfi_offset %r13, -40
     pushq   %r14
+    .cfi_def_cfa_offset 48
+    .cfi_offset %r14, -48
     pushq   %r15
+    .cfi_def_cfa_offset 56
+    .cfi_offset %r15, -56
+
+    /*
+     * 2b. Preserve MXCSR and x87 FCW onto Trusted Stack (Fix MED-01)
+     * Preserves caller floating-point control words and unmasks across call.
+     */
+    subq    $16, %rsp
+    .cfi_def_cfa_offset 72
+    stmxcsr 0(%rsp)
+    fnstcw  4(%rsp)
 
     /*
      * 3. Preserve tstate Pointer in Callee-Saved %r12
@@ -75,11 +97,15 @@ ng_callgate_invoke:
      * WRPKRU requires %ecx=0, %edx=0, and rights mask in %eax.
      * Followed immediately by LFENCE to halt speculative execution.
      */
+.globl __ng_callgate_drop_privs
+__ng_callgate_drop_privs:
     movl    %r8d, %eax
     xorl    %ecx, %ecx
     xorl    %edx, %edx
     wrpkru
     lfence
+.globl __ng_callgate_drop_privs_end
+__ng_callgate_drop_privs_end:
 
     /*
      * 8. Scratch Register Sanitization (Anti-ASLR Leak):
@@ -90,6 +116,13 @@ ng_callgate_invoke:
     xorq    %r8, %r8
     xorq    %r9, %r9
     xorq    %rsi, %rsi
+
+    /*
+     * 8b. Vector Register Scrubbing (Anti-Secret Leakage - Fix MED-05):
+     * Clear all XMM/YMM registers with vzeroall prior to entering the untrusted compartment
+     * so caller cryptographic keys or sensitive vector state cannot be leaked.
+     */
+    vzeroall
 
     /*
      * 9. Dispatch Target Function Inside the Compartment
@@ -104,9 +137,11 @@ ng_callgate_invoke:
     /*
      * 10. Preserve 64-Bit Return Value & Enforce System V Direction Flag
      * Target function returned its result in %rax; preserve in %r10.
+     * Clear upper 128-bits of YMM registers (vzeroupper) to prevent AVX-SSE penalty.
      * Execute CLD to guarantee DF=0 (countering malicious STD gadgets).
      */
     movq    %rax, %r10
+    vzeroupper
     cld
 
     /*
@@ -116,6 +151,8 @@ ng_callgate_invoke:
      * tstate or read trusted_rsp, because Key 1 is inaccessible while
      * in the untrusted compartment domain.
      */
+.globl __ng_callgate_restore_privs
+__ng_callgate_restore_privs:
     xorl    %eax, %eax
     xorl    %ecx, %ecx
     xorl    %edx, %edx
@@ -126,11 +163,23 @@ ng_callgate_invoke:
      * 11. Restore Trusted Stack and Reset Domain Status
      * SECURITY DEFENSE IN DEPTH:
      * We MUST NOT trust %r12 to have been preserved by untrusted compartment code!
-     * Load the verified g_trusted_state pointer directly from RIP-relative storage.
+     * Load the verified per-thread t_trusted_state directly from thread-local storage.
      */
-    movq    g_trusted_state(%rip), %r12
-    movq    0(%r12), %rsp
+    movq    t_trusted_state@gottpoff(%rip), %r12
+    movq    %fs:(%r12), %r12
     movl    $0, 8(%r12)
+    movq    0(%r12), %rsp
+.globl __ng_callgate_restore_privs_end
+__ng_callgate_restore_privs_end:
+
+    /*
+     * 11b. Restore and Sanitize Caller MXCSR and x87 FCW (Fix MED-01)
+     * Re-masks unmasked floating-point exception traps and restores rounding modes.
+     */
+    ldmxcsr 0(%rsp)
+    fldcw   4(%rsp)
+    addq    $16, %rsp
+    .cfi_def_cfa_offset 56
 
     /*
      * 12. Restore Target Return Value into %rax
@@ -144,16 +193,29 @@ ng_callgate_invoke:
      * 13. Pop Callee-Saved Registers from Trusted Stack
      */
     popq    %r15
+    .cfi_def_cfa_offset 48
+    .cfi_restore %r15
     popq    %r14
+    .cfi_def_cfa_offset 40
+    .cfi_restore %r14
     popq    %r13
+    .cfi_def_cfa_offset 32
+    .cfi_restore %r13
     popq    %r12
+    .cfi_def_cfa_offset 24
+    .cfi_restore %r12
     popq    %rbp
+    .cfi_def_cfa_offset 16
+    .cfi_restore %rbp
     popq    %rbx
+    .cfi_def_cfa_offset 8
+    .cfi_restore %rbx
 
     /*
      * 14. Return to Caller
      * Hardware User Shadow Stack (user_shstk) validates return address!
      */
     ret
+    .cfi_endproc
 
 .size ng_callgate_invoke, . - ng_callgate_invoke

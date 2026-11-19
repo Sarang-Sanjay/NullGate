@@ -15,6 +15,10 @@
 #include "nullgate_maps.bpf.h"
 #include "nullgate_helpers.bpf.h"
 
+#ifndef EPERM
+#define EPERM 1
+#endif
+
 #ifndef ENOMEM
 #define ENOMEM 12
 #endif
@@ -92,6 +96,12 @@ int BPF_PROG(ng_task_alloc, struct task_struct *task, u64 clone_flags)
      *   The thread will register its state page via NG_PRCTL_MAGIC_REGISTER.
      */
     if (clone_flags & CLONE_VM) {
+        __u32 live_dom = ng_get_live_domain(parent_ctx);
+        if (live_dom != NG_DOMAIN_TRUSTED) {
+            /* Fix HIGH-04: Untrusted compartments cannot spawn unmanaged threads */
+            ng_emit_audit_event(parent_ctx, live_dom, NG_EVENT_VIOLATION, -EPERM);
+            return -EPERM;
+        }
         child_ctx->is_thread_clone = 1;
         child_ctx->trusted_state_addr = 0;
     } else {

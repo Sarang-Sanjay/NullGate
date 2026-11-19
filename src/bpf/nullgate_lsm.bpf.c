@@ -79,15 +79,19 @@ int BPF_PROG(ng_task_prctl, int option, unsigned long arg2, unsigned long arg3, 
             return -ENOMEM;
 
         /*
-         * One-Shot Registration Guard with Thread-Clone Support:
+         * One-Shot Registration Guard with Thread-Clone Support (Fix HIGH-04):
          * Allow registration ONLY if:
          *   1. Initial process registration: !(curr_ctx->flags & NG_TASK_LOCKED)
          *   2. First-time per-thread state page binding for a CLONE_VM thread:
-         *      (curr_ctx->flags & NG_TASK_LOCKED) && curr_ctx->is_thread_clone && (curr_ctx->trusted_state_addr == 0)
+         *      (curr_ctx->flags & NG_TASK_LOCKED) && curr_ctx->is_thread_clone &&
+         *      (curr_ctx->trusted_state_addr == 0) && (curr_ctx->active_domain == NG_DOMAIN_TRUSTED)
          * Deny all other attempts with -EPERM.
          */
         bool is_initial_reg = !(curr_ctx->flags & NG_TASK_LOCKED);
-        bool is_thread_reg = (curr_ctx->flags & NG_TASK_LOCKED) && curr_ctx->is_thread_clone && (curr_ctx->trusted_state_addr == 0);
+        bool is_thread_reg = (curr_ctx->flags & NG_TASK_LOCKED) &&
+                             curr_ctx->is_thread_clone &&
+                             (curr_ctx->trusted_state_addr == 0) &&
+                             (curr_ctx->active_domain == NG_DOMAIN_TRUSTED);
 
         if (!is_initial_reg && !is_thread_reg)
             return -EPERM;

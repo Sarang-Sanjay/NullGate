@@ -4,6 +4,8 @@ set(LIBNULLGATE_SOURCES
     init.c
     pku.c
     callgate.S
+    signal.c
+    signal_trampoline.S
 )
 
 # Shared library: libnullgate.so

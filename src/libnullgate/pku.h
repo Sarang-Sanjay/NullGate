@@ -62,6 +62,11 @@ int pku_get_trusted_key(void);
 int pku_alloc_domain_key(uint32_t domain_id);
 
 /**
+ * pku_get_xsave_pkru_offset - Return the XSAVE byte offset for state component 9 (PKRU).
+ */
+int pku_get_xsave_pkru_offset(void);
+
+/**
  * pku_get_domain_key - Query the hardware key assigned to a domain.
  * @domain_id: Domain identifier
  *

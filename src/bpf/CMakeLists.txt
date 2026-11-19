@@ -3,6 +3,8 @@
 # Source files for NullGate BPF subsystem
 set(BPF_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_lsm.bpf.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_uring.bpf.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_sync.bpf.c
 )
 
 # Header dependencies for BPF compilation (auto-rebuild on header change)

@@ -52,11 +52,25 @@ target_link_libraries(phase2_stress_test_suite PRIVATE nullgate pthread)
 verify_cet_target(phase2_stress_test_suite)
 add_test(NAME phase2_stress_test_suite COMMAND phase2_stress_test_suite)
 
-# 9. CET ELF Note & Stack Non-Executability Audit Test (All Binaries)
+# 9. ELF Scrubber Unit Test (Pillar 4)
+add_executable(test_scrubber unit/test_scrubber.c)
+target_link_libraries(test_scrubber PRIVATE nullgate_scrubber_lib)
+target_include_directories(test_scrubber PRIVATE ${CMAKE_SOURCE_DIR}/src/scrubber)
+verify_cet_target(test_scrubber)
+add_test(NAME test_scrubber COMMAND test_scrubber)
+
+# 10. Asynchronous Signal & Altstack Unit Test (Pillar 5)
+add_executable(test_signal unit/test_signal.c)
+target_link_libraries(test_signal PRIVATE nullgate)
+verify_cet_target(test_signal)
+add_test(NAME test_signal COMMAND test_signal)
+
+# 11. CET ELF Note & Stack Non-Executability Audit Test (All Binaries)
 add_test(
     NAME test_cet_note
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cet_note.sh
         $<TARGET_FILE:nullgate-daemon>
+        $<TARGET_FILE:nullgate-scrubber>
         $<TARGET_FILE:nullgate>
         $<TARGET_FILE:test_pku>
         $<TARGET_FILE:test_callgate>
@@ -66,4 +80,61 @@ add_test(
         $<TARGET_FILE:test_fork_inheritance>
         $<TARGET_FILE:test_mmap_wx>
         $<TARGET_FILE:phase2_stress_test_suite>
+        $<TARGET_FILE:test_scrubber>
+        $<TARGET_FILE:test_signal>
+        $<TARGET_FILE:test_ptrace_proc>
+        $<TARGET_FILE:test_bpf_seccomp_tamper>
+        $<TARGET_FILE:test_sigreturn_forge>
+        $<TARGET_FILE:test_uring_escape>
+        $<TARGET_FILE:test_confused_deputy>
+        $<TARGET_FILE:bench_callgate_rdtscp>
+        $<TARGET_FILE:bench_syscall_lsm>
+        $<TARGET_FILE:phase3_stress_test_suite>
 )
+
+# 12. LLVM 18 Compiler Pass Integration Test (Pillar 4)
+if(LLVM18_FOUND)
+    add_test(
+        NAME test_llvm_pass
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_llvm_pass.sh
+            $<TARGET_FILE:NullGatePass>
+    )
+endif()
+
+# 13. Red-Team: Adversarial Procfs & Ptrace Snooping Test (Pillar 2, Group F)
+add_executable(test_ptrace_proc security/test_ptrace_proc.c)
+target_link_libraries(test_ptrace_proc PRIVATE nullgate)
+verify_cet_target(test_ptrace_proc)
+add_test(NAME test_ptrace_proc COMMAND test_ptrace_proc)
+
+# 14. Red-Team: BPF & Seccomp Self-Tampering Penetration Test (Pillar 3, Group F)
+add_executable(test_bpf_seccomp_tamper security/test_bpf_seccomp_tamper.c)
+target_link_libraries(test_bpf_seccomp_tamper PRIVATE nullgate)
+verify_cet_target(test_bpf_seccomp_tamper)
+add_test(NAME test_bpf_seccomp_tamper COMMAND test_bpf_seccomp_tamper)
+
+# 15. Red-Team: SROP Sigreturn Forgery Attack Test (Pillar 5, Group F)
+add_executable(test_sigreturn_forge security/test_sigreturn_forge.c)
+target_link_libraries(test_sigreturn_forge PRIVATE nullgate)
+verify_cet_target(test_sigreturn_forge)
+add_test(NAME test_sigreturn_forge COMMAND test_sigreturn_forge)
+
+# 16. Red-Team: io_uring Compartment Escape Attack Test (Pillar 7, Group F)
+add_executable(test_uring_escape security/test_uring_escape.c)
+target_link_libraries(test_uring_escape PRIVATE nullgate)
+verify_cet_target(test_uring_escape)
+add_test(NAME test_uring_escape COMMAND test_uring_escape)
+
+# 17. Red-Team: Confused Deputy Syscall Infiltration Test (Pillar 7, Group F)
+add_executable(test_confused_deputy security/test_confused_deputy.c)
+target_link_libraries(test_confused_deputy PRIVATE nullgate)
+verify_cet_target(test_confused_deputy)
+add_test(NAME test_confused_deputy COMMAND test_confused_deputy)
+
+# 18. Phase 3 Ultra-Intense Adversarial Stress Test Suite
+add_executable(phase3_stress_test_suite stress/phase3_stress_test_suite.c)
+target_include_directories(phase3_stress_test_suite PRIVATE ${CMAKE_SOURCE_DIR}/src/scrubber)
+target_link_libraries(phase3_stress_test_suite PRIVATE nullgate nullgate_scrubber_lib pthread)
+verify_cet_target(phase3_stress_test_suite)
+add_test(NAME phase3_stress_test_suite COMMAND phase3_stress_test_suite)
+
