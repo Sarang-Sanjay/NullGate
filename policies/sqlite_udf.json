@@ -1,0 +1,159 @@
+{
+  "magic": 1313296463,
+  "version": 1,
+  "num_domains": 16,
+  "flags": 0,
+  "domains": [
+    {
+      "id": 0,
+      "name": "supervisor",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [
+        "INHERIT_FORK"
+      ],
+      "allowed_syscalls": "all"
+    },
+    {
+      "id": 1,
+      "name": "trusted_runtime",
+      "pku_key": 2,
+      "max_memory_pages": 1024,
+      "flags": [
+        "STRICT_WX",
+        "BLOCK_PTRACE",
+        "BLOCK_PROCFS",
+        "BLOCK_BPF",
+        "BLOCK_URING",
+        "DEPUTY_GUARD"
+      ],
+      "allowed_syscalls": "all"
+    },
+    {
+      "id": 2,
+      "name": "unassigned_dom2",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 3,
+      "name": "sqlite_udf_worker",
+      "pku_key": 3,
+      "max_memory_pages": 1024,
+      "flags": [
+        "STRICT_WX",
+        "BLOCK_PTRACE",
+        "BLOCK_PROCFS",
+        "BLOCK_BPF",
+        "BLOCK_URING",
+        "DEPUTY_GUARD",
+        "STRICT_SYSCALL"
+      ],
+      "allowed_syscalls": [
+        0,
+        1,
+        96,
+        228,
+        231
+      ]
+    },
+    {
+      "id": 4,
+      "name": "unassigned_dom4",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 5,
+      "name": "unassigned_dom5",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 6,
+      "name": "unassigned_dom6",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 7,
+      "name": "unassigned_dom7",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 8,
+      "name": "unassigned_dom8",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 9,
+      "name": "unassigned_dom9",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 10,
+      "name": "unassigned_dom10",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 11,
+      "name": "unassigned_dom11",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 12,
+      "name": "unassigned_dom12",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 13,
+      "name": "unassigned_dom13",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 14,
+      "name": "unassigned_dom14",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    },
+    {
+      "id": 15,
+      "name": "unassigned_dom15",
+      "pku_key": 0,
+      "max_memory_pages": 0,
+      "flags": [],
+      "allowed_syscalls": "none"
+    }
+  ]
+}

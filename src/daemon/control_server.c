@@ -79,7 +79,7 @@ struct ng_control_server *ng_control_server_create(const char *override_path)
     srv->listen_fd = -1;
     srv->epoll_fd = -1;
 
-    char default_fallback[128];
+    char default_fallback[sizeof(srv->sock_path)];
     snprintf(default_fallback, sizeof(default_fallback), "/tmp/nullgate-%u/control.sock", (unsigned int)geteuid());
 
     const char *path = override_path;
@@ -96,7 +96,12 @@ struct ng_control_server *ng_control_server_create(const char *override_path)
         (void)ensure_socket_directory(path);
     }
 
-    strncpy(srv->sock_path, path, sizeof(srv->sock_path) - 1);
+    size_t plen = strlen(path);
+    if (plen >= sizeof(srv->sock_path)) {
+        plen = sizeof(srv->sock_path) - 1;
+    }
+    memcpy(srv->sock_path, path, plen);
+    srv->sock_path[plen] = '\0';
 
     /* Stale socket cleanup */
     unlink(srv->sock_path);
@@ -105,7 +110,12 @@ struct ng_control_server *ng_control_server_create(const char *override_path)
     if (srv->listen_fd < 0) {
         /* Fallback attempt to user-private /tmp directory socket */
         if (strcmp(srv->sock_path, default_fallback) != 0) {
-            strncpy(srv->sock_path, default_fallback, sizeof(srv->sock_path) - 1);
+            size_t flen = strlen(default_fallback);
+            if (flen >= sizeof(srv->sock_path)) {
+                flen = sizeof(srv->sock_path) - 1;
+            }
+            memcpy(srv->sock_path, default_fallback, flen);
+            srv->sock_path[flen] = '\0';
             (void)ensure_socket_directory(srv->sock_path);
             unlink(srv->sock_path);
             srv->listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
@@ -119,7 +129,8 @@ struct ng_control_server *ng_control_server_create(const char *override_path)
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, srv->sock_path, sizeof(addr.sun_path) - 1);
+    memcpy(addr.sun_path, srv->sock_path, sizeof(srv->sock_path));
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
     if (bind(srv->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(srv->listen_fd);

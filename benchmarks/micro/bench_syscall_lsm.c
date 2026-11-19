@@ -221,16 +221,19 @@ int main(void)
     /* =========================================================
      * Benchmark 3: Baseline Raw read() (0-byte)
      * ========================================================= */
+    volatile ssize_t v_rret;
     printf("[*] Warming up baseline read (%d iterations)...\n", WARMUP_ITERATIONS);
     for (int i = 0; i < WARMUP_ITERATIONS; i++) {
-        (void)read(g_bench_pipe[0], dummy_buf, 0);
+        v_rret = read(g_bench_pipe[0], dummy_buf, 0);
+        (void)v_rret;
     }
 
     printf("[*] Measuring baseline read (%d iterations)...\n", BENCH_ITERATIONS);
     for (int i = 0; i < BENCH_ITERATIONS; i++) {
         uint64_t t0 = rdtscp_start();
-        (void)read(g_bench_pipe[0], dummy_buf, 0);
+        v_rret = read(g_bench_pipe[0], dummy_buf, 0);
         uint64_t t1 = rdtscp_end();
+        (void)v_rret;
         samples[i] = (t1 > t0) ? (t1 - t0) : 0;
     }
     compute_stats(samples, BENCH_ITERATIONS, &stats_raw_read);

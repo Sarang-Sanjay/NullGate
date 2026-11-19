@@ -1,0 +1,152 @@
+name: NullGate CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-verify:
+    name: Build & Verify (Intel CET, Scrubber, LLVM Pass & PKU Tests)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies & toolchain
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            clang-18 \
+            llvm-18-dev \
+            libclang-18-dev \
+            bpftool \
+            libbpf-dev \
+            linux-libc-dev \
+            cmake \
+            libelf-dev \
+            binutils
+
+      - name: Pre-Flight Environment Inspection
+        run: |
+          echo "=== Kernel Version ==="
+          uname -a
+          echo "=== CPU Hardware Features ==="
+          grep -m 1 "flags" /proc/cpuinfo || true
+          echo "=== Active Linux Security Modules ==="
+          cat /sys/kernel/security/lsm 2>/dev/null || echo "Securityfs LSM not accessible"
+          echo "=== Compiler Version ==="
+          clang-18 --version
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18
+
+      - name: Compile NullGate Platform (-fcf-protection=full -mshstk)
+        run: |
+          cmake --build build -j$(nproc)
+
+      - name: Pillar 4 Gadget Invariant Audit (Zero WRPKRU in C code)
+        run: |
+          echo "Auditing C translation units for illegal WRPKRU opcodes..."
+          C_OBJECTS=(
+            build/src/libnullgate/CMakeFiles/nullgate.dir/pku.c.o
+            build/src/libnullgate/CMakeFiles/nullgate.dir/init.c.o
+            build/src/libnullgate/CMakeFiles/nullgate.dir/signal.c.o
+            build/src/libnullgate/CMakeFiles/nullgate.dir/stack_pool.c.o
+            build/src/libnullgate/CMakeFiles/nullgate.dir/ipc.c.o
+            build/src/daemon/CMakeFiles/nullgate-daemon.dir/main.c.o
+            build/src/daemon/CMakeFiles/nullgate-daemon.dir/policy_loader.c.o
+            build/src/daemon/CMakeFiles/nullgate-daemon.dir/policy_parser.c.o
+            build/src/daemon/CMakeFiles/nullgate-daemon.dir/control_server.c.o
+            build/src/cli/CMakeFiles/nullgate-ctl.dir/nullgate_ctl.c.o
+          )
+          ERRORS=0
+          for obj in "${C_OBJECTS[@]}"; do
+            if [ -f "$obj" ]; then
+              if objdump -d "$obj" | grep -qw "wrpkru"; then
+                echo "::error file=$obj::Illegal raw WRPKRU instruction detected in $(basename $obj)"
+                ERRORS=$((ERRORS + 1))
+              fi
+            fi
+          done
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "Pillar 4 invariant failed: $ERRORS object files contain forbidden WRPKRU opcodes."
+            exit 1
+          fi
+          echo "Pillar 4 invariant verified: 0 raw WRPKRU instructions across all C translation units."
+
+      - name: Static Binary Scrubber Audit (nullgate-scrubber --strict)
+        run: |
+          echo "Executing static scrubber on repository binaries..."
+          TARGETS=(
+            build/src/daemon/nullgate-daemon
+            build/src/cli/nullgate-ctl
+            build/src/libnullgate/libnullgate_shim.so
+            build/benchmarks/micro/bench_ipc_latency
+            build/benchmarks/sqlite/bench_sqlite_runner
+            build/tests/test_complete_audit
+            build/tests/test_ipc
+            build/tests/test_shim
+            build/tests/test_sqlite_sandbox
+          )
+          for bin in "${TARGETS[@]}"; do
+            if [ -f "$bin" ]; then
+              build/src/scrubber/nullgate-scrubber --strict "$bin"
+            fi
+          done
+          echo "All binaries certified clean by static scrubber."
+
+      - name: Intel CET (IBT + SHSTK) & NX Stack ELF Property Audit
+        run: |
+          echo "Verifying hardware CET and non-executable stack properties..."
+          TARGETS=(
+            build/src/daemon/nullgate-daemon
+            build/src/cli/nullgate-ctl
+            build/src/libnullgate/libnullgate.so
+            build/src/libnullgate/libnullgate_shim.so
+            build/src/scrubber/nullgate-scrubber
+          )
+          for target in "${TARGETS[@]}"; do
+            if [ -f "$target" ]; then
+              echo "Inspecting $(basename $target)..."
+              # Verify Intel CET notes
+              readelf -n "$target" | grep -q "IBT" || (echo "Missing IBT note in $target" && exit 1)
+              readelf -n "$target" | grep -q "SHSTK" || (echo "Missing SHSTK note in $target" && exit 1)
+              # Verify non-executable stack
+              readelf -l "$target" | grep -A 1 "GNU_STACK" | grep -q "RW" || (echo "GNU_STACK executable in $target" && exit 1)
+            fi
+          done
+          echo "All binaries and shared libraries confirmed Intel CET IBT + SHSTK enabled and NX stack compliant."
+
+      - name: LLVM 18 Compiler Pass AST & Call-Gate Enforcement Test
+        run: |
+          bash tests/unit/test_llvm_pass.sh build/src/llvm-pass/libNullGatePass.so
+
+      - name: Build Standalone Developer Examples
+        run: |
+          echo "Building Example 1: Basic Compartment..."
+          make -C examples/01_basic_compartment
+          echo "Building Example 2: Zero-Copy IPC..."
+          make -C examples/02_zero_copy_ipc
+          echo "Building Example 3: Library Shim..."
+          make -C examples/03_library_shim
+
+      - name: Hardware PKU Runtime Verification Matrix (Conditional)
+        run: |
+          if grep -qw ospke /proc/cpuinfo; then
+            echo "Hardware PKU (ospke) detected in CPU flags. Executing full automated CTest suite..."
+            ctest --test-dir build --output-on-failure
+          else
+            echo "=================================================================================="
+            echo " [INFO] Hardware PKU (ospke / CR4.PKE) is not virtualized on this cloud runner.   "
+            echo " Unconditional build, CET IBT+SHSTK notes, 0-gadget scrubber, LLVM pass, and      "
+            echo " standalone example compilations PASSED. Skipping runtime hardware PKU execution  "
+            echo " to prevent false failures on virtualized hypervisors.                            "
+            echo "=================================================================================="
+          fi

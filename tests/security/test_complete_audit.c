@@ -225,7 +225,7 @@ static uint64_t worker_deputy_probes(void *arg)
         return 1;
 
     /* Write test data into pipe */
-    write(pipefds[1], "ATTACK_PAYLOAD", 14);
+    if (write(pipefds[1], "ATTACK_PAYLOAD", 14) < 0) {}
 
     /* Vector 1: sys_read attempting to overwrite Key 1 trusted state */
     char buf[64];
@@ -239,7 +239,7 @@ static uint64_t worker_deputy_probes(void *arg)
     /* Vector 2: sys_write attempting to leak Key 1 trusted state */
     ssize_t wret = write(pipefds[1], (void *)tstate_addr, 16);
     if (wret > 0) {
-        read(pipefds[0], buf, sizeof(buf));
+        if (read(pipefds[0], buf, sizeof(buf)) < 0) {}
         close(pipefds[0]);
         close(pipefds[1]);
         return 3; /* Exploit: kernel leaked trusted state! */
@@ -399,7 +399,7 @@ static void test_stage5_procfs_and_ptrace(void)
 
         /* Inform parent of secret virtual address */
         uintptr_t addr = (uintptr_t)secret;
-        write(fds[1], &addr, sizeof(addr));
+        if (write(fds[1], &addr, sizeof(addr)) < 0) {}
         close(fds[1]);
 
         /* Wait for parent audit */
@@ -409,7 +409,7 @@ static void test_stage5_procfs_and_ptrace(void)
 
     close(fds[1]);
     uintptr_t child_addr = 0;
-    read(fds[0], &child_addr, sizeof(child_addr));
+    if (read(fds[0], &child_addr, sizeof(child_addr)) < 0) {}
     close(fds[0]);
 
     /* Vector 1: ptrace attach */

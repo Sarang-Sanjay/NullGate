@@ -303,7 +303,7 @@ static uint64_t confused_deputy_fuzz_worker(void *arg)
 
     /* Prime pipe with data so read() does not block */
     char dummy[64] = "PAYLOAD_BYTES";
-    write(pfd[1], dummy, sizeof(dummy));
+    if (write(pfd[1], dummy, sizeof(dummy)) < 0) { /* ignore */ }
 
     int blocked = 0;
 

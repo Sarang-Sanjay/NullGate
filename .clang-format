@@ -1,0 +1,49 @@
+---
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+
+# Indentation and column width
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+# Braces and layout
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: true
+  AfterControlStatement: false
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+# Pointer and reference alignment
+PointerAlignment: Right
+
+# Spaces and formatting
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesInContainerLiterals: false
+SpacesInCStyleCastParentheses: false
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Right
+AlignOperands: Align
+AlignTrailingComments: true
+
+# Includes
+SortIncludes: false
+...

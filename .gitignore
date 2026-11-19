@@ -6,15 +6,8 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 CTestTestfile.cmake
-Makefile
 compile_commands.json
 Testing/
-
-# Project-specific temporary directory and planning docs
-temp/
-tmp/
-*.tmp
-*implementation_plan*.md
 
 # Object files, libraries, and binaries
 *.o
@@ -32,7 +25,15 @@ tmp/
 *.bpf.o
 *.skel.h
 
-# Debug and memory dumps
+# Benchmark generated outputs and temporary databases
+*benchmark_results.json
+*.db
+*.db-journal
+*.db-wal
+benchmarks/nginx/build/
+benchmarks/nginx/nginx-*/
+
+# Debug, crash and memory dumps
 core
 core.*
 *.dSYM/
@@ -41,6 +42,18 @@ core.*
 # Test outputs and logs
 *.log
 test_bin
+
+# Temporary scratch directories
+temp/
+tmp/
+*.tmp
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.venv
+venv/
 
 # IDE and Editor files
 .vscode/

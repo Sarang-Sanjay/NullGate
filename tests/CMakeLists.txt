@@ -153,7 +153,7 @@ add_library(mock_target SHARED unit/mock_target.c)
 verify_cet_target(mock_target)
 
 add_executable(test_shim unit/test_shim.c)
-target_link_libraries(test_shim PRIVATE nullgate nullgate_shim mock_target pthread ${CMAKE_DL_LIBS})
+target_link_libraries(test_shim PRIVATE nullgate nullgate_shim -Wl,--no-as-needed mock_target -Wl,--as-needed pthread ${CMAKE_DL_LIBS})
 verify_cet_target(test_shim)
 add_test(NAME test_shim COMMAND test_shim)
 

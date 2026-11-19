@@ -58,7 +58,7 @@ static uint64_t confused_deputy_worker(void *arg)
     /* Vector 1: sys_read(pipe_in[0], trusted_state_addr, 64) */
     printf("  [VECTOR 1] Attempting sys_read() into Key 1 trusted state...\n");
     char payload[64] = "MALICIOUS_POISON_OVERWRITE_0123456789";
-    write(ctx->pipe_in[1], payload, sizeof(payload));
+    if (write(ctx->pipe_in[1], payload, sizeof(payload)) < 0) { /* ignore */ }
 
     ssize_t nread = read(ctx->pipe_in[0], (void *)ctx->trusted_state_addr, sizeof(payload));
     if (nread > 0) {
@@ -95,7 +95,7 @@ static uint64_t confused_deputy_worker(void *arg)
 
     /* Vector 4: Cross-Domain Overwrite (read into Domain 2 memory) */
     printf("  [VECTOR 4] Attempting sys_read() overwriting Domain 2 memory...\n");
-    write(ctx->pipe_in[1], payload, sizeof(payload));
+    if (write(ctx->pipe_in[1], payload, sizeof(payload)) < 0) { /* ignore */ }
     nread = read(ctx->pipe_in[0], ctx->domain2_buf, sizeof(payload));
     if (nread > 0) {
         printf("    [FAIL] CRITICAL: Kernel read() overwrote Domain 2 buffer (%zd bytes)!\n", nread);

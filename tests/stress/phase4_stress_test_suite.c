@@ -224,6 +224,11 @@ static void *signal_injector_thread(void *arg)
     sigaddset(&mask, SIGUSR1);
     pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
+    /* Initial guaranteed burst across all workers */
+    for (int t = 0; t < NUM_WORKER_THREADS; t++) {
+        pthread_kill(workers[t], (t & 1) ? SIGALRM : SIGUSR1);
+    }
+
     while (!atomic_load(&g_storm_stop)) {
         /* Direct signal bursts specifically to worker threads */
         prng ^= prng << 13;
@@ -232,7 +237,7 @@ static void *signal_injector_thread(void *arg)
         int target = (int)(prng % NUM_WORKER_THREADS);
 
         pthread_kill(workers[target], (target & 1) ? SIGALRM : SIGUSR1);
-        sched_yield();
+        usleep(10);
     }
     return NULL;
 }
