@@ -90,6 +90,10 @@ add_test(
         $<TARGET_FILE:bench_callgate_rdtscp>
         $<TARGET_FILE:bench_syscall_lsm>
         $<TARGET_FILE:phase3_stress_test_suite>
+        $<TARGET_FILE:test_ipc>
+        $<TARGET_FILE:bench_ipc_latency>
+        $<TARGET_FILE:test_sqlite_sandbox>
+        $<TARGET_FILE:bench_sqlite_runner>
 )
 
 # 12. LLVM 18 Compiler Pass Integration Test (Pillar 4)
@@ -137,4 +141,59 @@ target_include_directories(phase3_stress_test_suite PRIVATE ${CMAKE_SOURCE_DIR}/
 target_link_libraries(phase3_stress_test_suite PRIVATE nullgate nullgate_scrubber_lib pthread)
 verify_cet_target(phase3_stress_test_suite)
 add_test(NAME phase3_stress_test_suite COMMAND phase3_stress_test_suite)
+
+# 19. Hardware-Isolated Stack Pool Unit Test (Pillars 1, 4, 5, Group B)
+add_executable(test_stack_pool unit/test_stack_pool.c)
+target_link_libraries(test_stack_pool PRIVATE nullgate pthread)
+verify_cet_target(test_stack_pool)
+add_test(NAME test_stack_pool COMMAND test_stack_pool)
+
+# 20. Transparent Library Interposition & Shim Unit Test (Pillars 1, 4, 5, Group B)
+add_library(mock_target SHARED unit/mock_target.c)
+verify_cet_target(mock_target)
+
+add_executable(test_shim unit/test_shim.c)
+target_link_libraries(test_shim PRIVATE nullgate nullgate_shim mock_target pthread ${CMAKE_DL_LIBS})
+verify_cet_target(test_shim)
+add_test(NAME test_shim COMMAND test_shim)
+
+# 21. Zero-Copy Hardware PKU SPSC IPC Unit Test (Pillars 1, 7, Group C)
+add_executable(test_ipc unit/test_ipc.c)
+target_link_libraries(test_ipc PRIVATE nullgate pthread)
+verify_cet_target(test_ipc)
+add_test(NAME test_ipc COMMAND test_ipc)
+
+# 22. SQLite UDF Multi-Vector Escape Penetration Test (Pillars 1, 2, 7, Group D)
+add_executable(test_sqlite_sandbox security/test_sqlite_sandbox.c)
+target_include_directories(test_sqlite_sandbox PRIVATE
+    ${PROJECT_SOURCE_DIR}/benchmarks/sqlite
+)
+target_link_libraries(test_sqlite_sandbox PRIVATE nullgate_sqlite nullgate pthread)
+verify_cet_target(test_sqlite_sandbox)
+add_test(NAME test_sqlite_sandbox COMMAND test_sqlite_sandbox)
+
+# 23. Phase 4 Ultra-Intense Concurrency, Fuzzing & Key Recycling Stress Test (Group E)
+add_executable(phase4_stress_test_suite stress/phase4_stress_test_suite.c)
+target_include_directories(phase4_stress_test_suite PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/libnullgate
+)
+target_link_libraries(phase4_stress_test_suite PRIVATE nullgate pthread)
+verify_cet_target(phase4_stress_test_suite)
+add_test(NAME phase4_stress_test_suite COMMAND phase4_stress_test_suite)
+
+# 24. Repository-Wide Comprehensive Security Audit Test (Pillars 1-8, Group E, Step 19)
+add_executable(test_complete_audit
+    security/test_complete_audit.c
+    ${PROJECT_SOURCE_DIR}/src/daemon/policy_parser.c
+)
+target_include_directories(test_complete_audit PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/libnullgate
+    ${PROJECT_SOURCE_DIR}/src/scrubber
+    ${PROJECT_SOURCE_DIR}/src/daemon
+)
+target_link_libraries(test_complete_audit PRIVATE nullgate nullgate_scrubber_lib pthread)
+verify_cet_target(test_complete_audit)
+add_test(NAME test_complete_audit COMMAND test_complete_audit)
+
+
 

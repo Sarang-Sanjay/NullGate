@@ -6,6 +6,8 @@ set(LIBNULLGATE_SOURCES
     callgate.S
     signal.c
     signal_trampoline.S
+    stack_pool.c
+    ipc.c
 )
 
 # Shared library: libnullgate.so
@@ -31,3 +33,21 @@ target_include_directories(nullgate_static
 
 # Enforce Intel CET (IBT + SHSTK) on libnullgate.so
 verify_cet_target(nullgate)
+
+# Transparent Interposition Shim Library: libnullgate_shim.so
+add_library(nullgate_shim SHARED shim.c)
+
+target_include_directories(nullgate_shim
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(nullgate_shim PRIVATE
+    nullgate
+    ${CMAKE_DL_LIBS}
+)
+
+# Enforce Intel CET (IBT + SHSTK) on libnullgate_shim.so
+verify_cet_target(nullgate_shim)

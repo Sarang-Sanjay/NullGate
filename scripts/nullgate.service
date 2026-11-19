@@ -1,0 +1,34 @@
+[Unit]
+Description=NullGate Hardware Memory Isolation & eBPF Security Daemon
+Documentation=https://github.com/nullgate/nullgate
+After=network.target local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/nullgate-daemon --config /etc/nullgate/policy.json
+Restart=on-failure
+RestartSec=3s
+TimeoutStartSec=15s
+TimeoutStopSec=10s
+
+# Capabilities required for BPF LSM attachment, maps, and memory locking
+AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN CAP_IPC_LOCK
+
+# Security Lockdown & Isolation
+NoNewPrivileges=false
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+PrivateTmp=true
+
+# Runtime & Configuration Directories
+RuntimeDirectory=nullgate
+RuntimeDirectoryMode=0700
+ConfigurationDirectory=nullgate
+ConfigurationDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

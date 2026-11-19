@@ -3,6 +3,8 @@
 set(DAEMON_SOURCES
     main.c
     policy_loader.c
+    policy_parser.c
+    control_server.c
     attestation.c
 )
 

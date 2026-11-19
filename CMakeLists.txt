@@ -51,6 +51,7 @@ enable_testing()
 # Project subdirectories
 add_subdirectory(src/bpf)
 add_subdirectory(src/daemon)
+add_subdirectory(src/cli)
 add_subdirectory(src/libnullgate)
 add_subdirectory(src/scrubber)
 if(LLVM18_FOUND)

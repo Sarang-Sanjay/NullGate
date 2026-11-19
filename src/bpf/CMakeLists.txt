@@ -17,6 +17,7 @@ set(BPF_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_tamper.bpf.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_lifecycle.bpf.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_mprotect.bpf.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/nullgate_ipc.bpf.h
 )
 
 # Include paths required for BPF compilation

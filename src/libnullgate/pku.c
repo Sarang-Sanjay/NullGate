@@ -13,12 +13,16 @@
 #include <stdbool.h>
 #include <sys/mman.h>
 #include <cpuid.h>
+#include <pthread.h>
+#include <errno.h>
 
 #include "pku.h"
 #include "nullgate.h"
 #include "nullgate_abi.h"
 
 static int g_domain_keys[NG_MAX_DOMAINS];
+static uint16_t g_shared_key_masks[NG_MAX_DOMAINS];
+static pthread_mutex_t g_pku_key_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_trusted_key = -1;
 static uint32_t g_xsave_pkru_offset = 0;
 static bool g_pku_initialized = false;
@@ -167,6 +171,55 @@ uint32_t pku_build_pkru_mask(uint32_t active_domain)
         }
     }
 
+    /* Unmask any shared keys granted to this domain (e.g. for IPC channels) */
+    if (active_domain < NG_MAX_DOMAINS) {
+        pthread_mutex_lock(&g_pku_key_mutex);
+        uint16_t shared = g_shared_key_masks[active_domain];
+        pthread_mutex_unlock(&g_pku_key_mutex);
+
+        for (unsigned int k = 2; k < 16; k++) {
+            if ((shared & (1U << k)) && ((int)k != g_trusted_key)) {
+                mask &= ~PKRU_DISABLE_ALL(k);
+            }
+        }
+    }
+
     /* Key 0 (default memory) always remains enabled (bits 0 and 1 are 0) */
     return mask;
+}
+
+int pku_grant_shared_key(uint32_t domain_id, int shared_pkey)
+{
+    if (domain_id >= NG_MAX_DOMAINS)
+        return -EINVAL;
+
+    /* Key 1 (trusted runtime state) is strictly forbidden from being shared */
+    if (shared_pkey <= 1 || shared_pkey >= 16)
+        return -EINVAL;
+
+    if (shared_pkey == g_trusted_key)
+        return -EINVAL;
+
+    pthread_mutex_lock(&g_pku_key_mutex);
+    g_shared_key_masks[domain_id] |= (uint16_t)(1U << shared_pkey);
+    pthread_mutex_unlock(&g_pku_key_mutex);
+
+    ng_domain_refresh_pkru(domain_id);
+    return 0;
+}
+
+int pku_revoke_shared_key(uint32_t domain_id, int shared_pkey)
+{
+    if (domain_id >= NG_MAX_DOMAINS)
+        return -EINVAL;
+
+    if (shared_pkey <= 1 || shared_pkey >= 16)
+        return -EINVAL;
+
+    pthread_mutex_lock(&g_pku_key_mutex);
+    g_shared_key_masks[domain_id] &= (uint16_t)~(1U << shared_pkey);
+    pthread_mutex_unlock(&g_pku_key_mutex);
+
+    ng_domain_refresh_pkru(domain_id);
+    return 0;
 }

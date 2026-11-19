@@ -281,6 +281,17 @@ int ng_domain_create(uint32_t domain_id, void *stack_base, size_t stack_size)
     return NG_SUCCESS;
 }
 
+void ng_domain_refresh_pkru(uint32_t domain_id)
+{
+    if (domain_id < NG_MAX_DOMAINS) {
+        pthread_mutex_lock(&g_domain_mutex);
+        if (g_domains[domain_id].allocated) {
+            g_domains[domain_id].target_pkru = pku_build_pkru_mask(domain_id);
+        }
+        pthread_mutex_unlock(&g_domain_mutex);
+    }
+}
+
 int ng_domain_protect(uint32_t domain_id, void *addr, size_t len, int prot)
 {
     if (!g_rt_initialized)
@@ -354,6 +365,8 @@ int ng_domain_protect(uint32_t domain_id, void *addr, size_t len, int prot)
     return NG_SUCCESS;
 }
 
+extern void ng_shim_reset_depth(void) __attribute__((weak));
+
 uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
 {
     if (!g_rt_initialized) {
@@ -380,7 +393,11 @@ uint64_t ng_enter(uint32_t domain_id, ng_compartment_fn fn, void *arg)
      * restores trusted PKRU (0x0), and returns the 64-bit result.
      * Concurrency is fully parallel per thread without global mutex serialization!
      */
-    return ng_callgate_invoke(domain_id, fn, arg, stack_top, target_pkru, tstate);
+    uint64_t res = ng_callgate_invoke(domain_id, fn, arg, stack_top, target_pkru, tstate);
+    if (ng_shim_reset_depth) {
+        ng_shim_reset_depth();
+    }
+    return res;
 }
 
 uint32_t ng_get_active_domain(void)

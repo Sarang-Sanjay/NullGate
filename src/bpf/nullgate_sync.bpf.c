@@ -15,6 +15,7 @@
 #include "nullgate_policy.h"
 #include "nullgate_maps.bpf.h"
 #include "nullgate_helpers.bpf.h"
+#include "nullgate_ipc.bpf.h"
 
 #ifndef EPERM
 #define EPERM   1
